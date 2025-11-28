@@ -5,7 +5,7 @@ import { AutoModel, AutoProcessor, env, RawImage } from '@huggingface/transforme
 import { Button } from '@proj-airi/stage-ui/components'
 import { Checkbox, InputFile } from '@proj-airi/ui'
 import { check } from 'gpuu/webgpu'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const model = ref<PreTrainedModel>()
 const processor = ref<Processor>()
@@ -122,7 +122,8 @@ async function processImage(item: ImageItem, index: number): Promise<void> {
     item.processedUrl = canvas.toDataURL('image/png')
     item.status = 'done'
   }
-  catch {
+  catch (err) {
+    console.error(`Failed to process image: ${item.file.name}`, err)
     item.status = 'error'
   }
 }
@@ -134,12 +135,13 @@ async function processAllImages() {
   processing.value = true
   progressPercent.value = 0
 
-  const pendingItems = imageItems.value.filter(item => item.status === 'pending')
-  const totalImages = pendingItems.length
+  const pendingItems = imageItems.value
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.status === 'pending')
 
-  for (let i = 0; i < totalImages; ++i) {
-    await processImage(pendingItems[i], imageItems.value.indexOf(pendingItems[i]))
-    progressPercent.value = Math.round(((i + 1) / totalImages) * 100)
+  for (let i = 0; i < pendingItems.length; ++i) {
+    await processImage(pendingItems[i].item, pendingItems[i].index)
+    progressPercent.value = Math.round(((i + 1) / pendingItems.length) * 100)
   }
 
   processing.value = false
@@ -205,6 +207,13 @@ function updatePreviewPosition(event: MouseEvent) {
 function hidePreview() {
   previewImage.value = null
 }
+
+onUnmounted(() => {
+  imageItems.value.forEach((item) => {
+    if (item.originalUrl)
+      URL.revokeObjectURL(item.originalUrl)
+  })
+})
 </script>
 
 <template>
@@ -344,7 +353,7 @@ function hidePreview() {
                   <div v-else-if="item.status === 'done'" i-solar:check-circle-bold text-xs />
                   <div v-else-if="item.status === 'error'" i-solar:close-circle-bold text-xs />
                   <div v-else i-solar:clock-circle-linear text-xs />
-                  {{ item.status === 'pending' ? 'Pending' : item.status === 'processing' ? 'Processing' : item.status === 'done' ? 'Done' : 'Error' }}
+                  {{ { pending: 'Pending', processing: 'Processing', done: 'Done', error: 'Error' }[item.status] }}
                 </span>
               </td>
 
