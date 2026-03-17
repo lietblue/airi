@@ -244,6 +244,39 @@ function filterParam(key: keyof typeof oefStates, raw: number): number {
   )
 }
 
+// ── Input shaping ──────────────────────────────────────────────────────────
+//
+// Applied to raw parameter values BEFORE the One Euro Filter so the filter
+// tracks the already-shaped signal.
+//
+// sensitivity: linear scale on the normalized value (< 1 = less sensitive)
+// gamma: power-curve exponent applied after scaling
+//   gamma = 1.0 → linear (no curve)
+//   gamma > 1.0 → small inputs are compressed; you have to move more to reach
+//                 full range — reduces the "steep" / over-reactive feel
+//   gamma < 1.0 → small inputs are amplified (rarely useful for mocap)
+
+const inputShape = ref({
+  headSensitivity: 0.8, // angleX / Y / Z
+  eyeSensitivity: 1.0, // leftEyeOpen / rightEyeOpen
+  mouthSensitivity: 0.9, // mouthOpen / mouthForm
+  browSensitivity: 0.8, // leftEyebrowY / rightEyebrowY
+  gamma: 1.4, // shared power-curve exponent
+})
+
+/**
+ * Shape a parameter that lives in [-range, +range]:
+ *   1. normalize to [-1, 1]
+ *   2. scale by sensitivity
+ *   3. apply power curve (preserves sign)
+ *   4. re-scale back to range and clamp
+ */
+function shapeParam(value: number, range: number, sensitivity: number): number {
+  const n = (value / range) * sensitivity
+  const curved = Math.sign(n) * Math.abs(n) ** inputShape.value.gamma
+  return Math.max(-range, Math.min(range, curved * range))
+}
+
 /**
  * Maps MediaPipe face landmarks (478-point face mesh) to Live2D model parameters.
  *
@@ -375,18 +408,21 @@ function applyFaceToLive2d(face: FaceState): void {
   const leftEyebrowY = Math.max(-1, Math.min(1, (browRest - leftBrowDist) / 0.04))
   const rightEyebrowY = Math.max(-1, Math.min(1, (browRest - rightBrowDist) / 0.04))
 
-  // ── Filter & apply (One Euro Filter per parameter) ────────────────────
+  // ── Input shaping + Filter & apply ───────────────────────────────────
+  // shapeParam runs first (sensitivity + gamma curve), then OEF filters
+  // the shaped signal so the filter tracks the intended target, not the raw one.
 
+  const s = inputShape.value
   const p = modelParameters.value
-  p.angleX = filterParam('angleX', angleX)
-  p.angleY = filterParam('angleY', angleY)
-  p.angleZ = filterParam('angleZ', angleZ)
-  p.leftEyeOpen = filterParam('leftEyeOpen', leftEyeOpen)
-  p.rightEyeOpen = filterParam('rightEyeOpen', rightEyeOpen)
-  p.mouthOpen = filterParam('mouthOpen', mouthOpen)
-  p.mouthForm = filterParam('mouthForm', mouthForm)
-  p.leftEyebrowY = filterParam('leftEyebrowY', leftEyebrowY)
-  p.rightEyebrowY = filterParam('rightEyebrowY', rightEyebrowY)
+  p.angleX = filterParam('angleX', shapeParam(angleX, 30, s.headSensitivity))
+  p.angleY = filterParam('angleY', shapeParam(angleY, 30, s.headSensitivity))
+  p.angleZ = filterParam('angleZ', shapeParam(angleZ, 30, s.headSensitivity))
+  p.leftEyeOpen = filterParam('leftEyeOpen', shapeParam(leftEyeOpen, 1, s.eyeSensitivity))
+  p.rightEyeOpen = filterParam('rightEyeOpen', shapeParam(rightEyeOpen, 1, s.eyeSensitivity))
+  p.mouthOpen = filterParam('mouthOpen', shapeParam(mouthOpen, 1, s.mouthSensitivity))
+  p.mouthForm = filterParam('mouthForm', shapeParam(mouthForm, 1, s.mouthSensitivity))
+  p.leftEyebrowY = filterParam('leftEyebrowY', shapeParam(leftEyebrowY, 1, s.browSensitivity))
+  p.rightEyebrowY = filterParam('rightEyebrowY', shapeParam(rightEyebrowY, 1, s.browSensitivity))
 }
 
 // ── Settings store (model selection) ───────────────────────────────────────
@@ -763,6 +799,49 @@ onUnmounted(() => {
               :step="step"
               :class="['w-full']"
               @input="(e) => { (oefConfig as Record<string, number>)[key] = Number((e.target as HTMLInputElement).value) }"
+            >
+            <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ hint }}
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Input Shaping -->
+      <div :class="['space-y-2']">
+        <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
+          Input Shaping
+        </div>
+        <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+          Sensitivity scales the raw value; gamma &gt; 1 compresses small inputs so the model
+          only reacts strongly to deliberate movements.
+        </div>
+        <div :class="['grid', 'gap-2', 'sm:grid-cols-2', 'lg:grid-cols-3']">
+          <label
+            v-for="({ min, max, step, hint }, key) in ({
+              headSensitivity: { min: 0.1, max: 2, step: 0.05, hint: 'head angles' },
+              eyeSensitivity: { min: 0.1, max: 2, step: 0.05, hint: 'eye openness' },
+              mouthSensitivity: { min: 0.1, max: 2, step: 0.05, hint: 'mouth open / form' },
+              browSensitivity: { min: 0.1, max: 2, step: 0.05, hint: 'eyebrow Y' },
+              gamma: { min: 0.5, max: 3, step: 0.05, hint: '1 = linear, >1 = compress small inputs' },
+            } as Record<string, { min: number; max: number; step: number; hint: string }>)"
+            :key="key"
+            :class="['flex', 'flex-col', 'gap-1']"
+          >
+            <div :class="['flex', 'justify-between', 'items-baseline']">
+              <span :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">{{ key }}</span>
+              <span :class="['text-xs', 'tabular-nums', 'text-neutral-500']">
+                {{ (inputShape as Record<string, number>)[key].toFixed(2) }}
+              </span>
+            </div>
+            <input
+              :value="(inputShape as Record<string, number>)[key]"
+              type="range"
+              :min="min"
+              :max="max"
+              :step="step"
+              :class="['w-full']"
+              @input="(e) => { (inputShape as Record<string, number>)[key] = Number((e.target as HTMLInputElement).value) }"
             >
             <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
               {{ hint }}
