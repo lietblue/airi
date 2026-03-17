@@ -57,8 +57,156 @@ const poseFiltering = ref({
   minVisibility: 0.5,
 })
 
-// Smoothing alpha: 0 = no smoothing (snap), 1 = frozen
-const smoothing = ref(0.35)
+// ── One Euro Filter ────────────────────────────────────────────────────────
+//
+// Adaptive low-pass filter designed for real-time input streams (Casiez et al.
+// 2012).  At low speed it smooths aggressively to kill jitter; at high speed it
+// lets signal through to avoid lag — unlike a fixed EMA which always trades one
+// for the other.
+//
+// Tuning:
+//   minCutoff — lower → more smoothing when still (reduce jitter), but more lag
+//   beta      — higher → less lag during fast movement
+//   dCutoff   — cutoff for the derivative; 1 Hz is a good default
+//
+// NOTICE: reference paper & interactive demo at
+//   https://gery.casiez.net/1euro/
+
+interface OEFState {
+  x: number
+  dx: number
+  t: number // timestamp of last sample (ms)
+  initialized: boolean
+}
+
+function oefAlpha(cutoff: number, dt: number): number {
+  // dt in seconds; tau = 1/(2π·cutoff)
+  const tau = 1 / (2 * Math.PI * cutoff)
+  return 1 / (1 + tau / dt)
+}
+
+function oefFilter(state: OEFState, raw: number, minCutoff: number, beta: number, dCutoff: number): number {
+  const now = performance.now()
+  if (!state.initialized) {
+    state.x = raw
+    state.dx = 0
+    state.t = now
+    state.initialized = true
+    return raw
+  }
+
+  const dt = Math.max((now - state.t) / 1000, 1e-4) // seconds, guard div/0
+  state.t = now
+
+  // Filtered derivative
+  const dAlpha = oefAlpha(dCutoff, dt)
+  const dRaw = (raw - state.x) / dt
+  state.dx += dAlpha * (dRaw - state.dx)
+
+  // Adaptive cutoff driven by signal speed
+  const cutoff = minCutoff + beta * Math.abs(state.dx)
+  const alpha = oefAlpha(cutoff, dt)
+  state.x += alpha * (raw - state.x)
+
+  return state.x
+}
+
+function makeOEFState(): OEFState {
+  return { x: 0, dx: 0, t: 0, initialized: false }
+}
+
+// Per-parameter filter states
+const oefStates = {
+  angleX: makeOEFState(),
+  angleY: makeOEFState(),
+  angleZ: makeOEFState(),
+  leftEyeOpen: makeOEFState(),
+  rightEyeOpen: makeOEFState(),
+  mouthOpen: makeOEFState(),
+  mouthForm: makeOEFState(),
+  leftEyebrowY: makeOEFState(),
+  rightEyebrowY: makeOEFState(),
+}
+
+// ── One Euro Filter presets ────────────────────────────────────────────────
+
+interface OEFPreset {
+  label: string
+  /** One-line description shown in the UI */
+  description: string
+  minCutoff: number
+  beta: number
+  dCutoff: number
+}
+
+const OEF_PRESETS: Record<string, OEFPreset> = {
+  responsive: {
+    label: 'Responsive',
+    description: 'Low lag, more jitter — good for fast movements',
+    minCutoff: 3.0,
+    beta: 0.2,
+    dCutoff: 1.0,
+  },
+  balanced: {
+    label: 'Balanced',
+    description: 'Default — works well for most webcam conditions',
+    minCutoff: 0.8,
+    beta: 0.05,
+    dCutoff: 1.0,
+  },
+  smooth: {
+    label: 'Smooth',
+    description: 'Very stable, slight lag — good for slow/ambient motion',
+    minCutoff: 0.3,
+    beta: 0.01,
+    dCutoff: 1.0,
+  },
+  custom: {
+    label: 'Custom',
+    description: 'Manual tuning',
+    minCutoff: 0.8,
+    beta: 0.05,
+    dCutoff: 1.0,
+  },
+}
+
+type OEFPresetKey = keyof typeof OEF_PRESETS
+
+const activePreset = ref<OEFPresetKey>('balanced')
+
+// One Euro Filter tuning knobs — driven by preset or manual sliders
+const oefConfig = ref({
+  minCutoff: OEF_PRESETS.balanced.minCutoff,
+  beta: OEF_PRESETS.balanced.beta,
+  dCutoff: OEF_PRESETS.balanced.dCutoff,
+})
+
+function applyPreset(key: OEFPresetKey) {
+  activePreset.value = key
+  const preset = OEF_PRESETS[key]
+  oefConfig.value.minCutoff = preset.minCutoff
+  oefConfig.value.beta = preset.beta
+  oefConfig.value.dCutoff = preset.dCutoff
+  // Reset filter states so stale history doesn't bleed into the new response curve
+  for (const s of Object.values(oefStates))
+    s.initialized = false
+}
+
+// When the user edits sliders manually, mark as custom
+watch(oefConfig, () => {
+  const p = OEF_PRESETS[activePreset.value]
+  if (
+    activePreset.value !== 'custom'
+    && (oefConfig.value.minCutoff !== p.minCutoff
+      || oefConfig.value.beta !== p.beta
+      || oefConfig.value.dCutoff !== p.dCutoff)
+  ) {
+    activePreset.value = 'custom'
+    OEF_PRESETS.custom.minCutoff = oefConfig.value.minCutoff
+    OEF_PRESETS.custom.beta = oefConfig.value.beta
+    OEF_PRESETS.custom.dCutoff = oefConfig.value.dCutoff
+  }
+}, { deep: true })
 
 // ── Perception state ────────────────────────────────────────────────────────
 
@@ -85,12 +233,15 @@ const vrmFrameHook = (vrm: Parameters<typeof vrmPoseApplier.applyPoseDirectionsT
 const live2dStore = useLive2d()
 const { modelParameters } = storeToRefs(live2dStore)
 
-/**
- * Lerps a single value toward target, respecting the smoothing alpha.
- * alpha=0 → snap immediately, alpha=1 → no change.
- */
-function lerpParam(current: number, target: number): number {
-  return current + (target - current) * (1 - smoothing.value)
+/** Applies One Euro Filter for a named Live2D parameter. */
+function filterParam(key: keyof typeof oefStates, raw: number): number {
+  return oefFilter(
+    oefStates[key],
+    raw,
+    oefConfig.value.minCutoff,
+    oefConfig.value.beta,
+    oefConfig.value.dCutoff,
+  )
 }
 
 /**
@@ -224,18 +375,18 @@ function applyFaceToLive2d(face: FaceState): void {
   const leftEyebrowY = Math.max(-1, Math.min(1, (browRest - leftBrowDist) / 0.04))
   const rightEyebrowY = Math.max(-1, Math.min(1, (browRest - rightBrowDist) / 0.04))
 
-  // ── Smooth & apply ────────────────────────────────────────────────────
+  // ── Filter & apply (One Euro Filter per parameter) ────────────────────
 
   const p = modelParameters.value
-  p.angleX = lerpParam(p.angleX, angleX)
-  p.angleY = lerpParam(p.angleY, angleY)
-  p.angleZ = lerpParam(p.angleZ, angleZ)
-  p.leftEyeOpen = lerpParam(p.leftEyeOpen, leftEyeOpen)
-  p.rightEyeOpen = lerpParam(p.rightEyeOpen, rightEyeOpen)
-  p.mouthOpen = lerpParam(p.mouthOpen, mouthOpen)
-  p.mouthForm = lerpParam(p.mouthForm, mouthForm)
-  p.leftEyebrowY = lerpParam(p.leftEyebrowY, leftEyebrowY)
-  p.rightEyebrowY = lerpParam(p.rightEyebrowY, rightEyebrowY)
+  p.angleX = filterParam('angleX', angleX)
+  p.angleY = filterParam('angleY', angleY)
+  p.angleZ = filterParam('angleZ', angleZ)
+  p.leftEyeOpen = filterParam('leftEyeOpen', leftEyeOpen)
+  p.rightEyeOpen = filterParam('rightEyeOpen', rightEyeOpen)
+  p.mouthOpen = filterParam('mouthOpen', mouthOpen)
+  p.mouthForm = filterParam('mouthForm', mouthForm)
+  p.leftEyebrowY = filterParam('leftEyebrowY', leftEyebrowY)
+  p.rightEyebrowY = filterParam('rightEyebrowY', rightEyebrowY)
 }
 
 // ── Settings store (model selection) ───────────────────────────────────────
@@ -533,7 +684,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- VRM axis flip + smoothing -->
+      <!-- VRM axis flip + filter -->
       <div :class="['flex', 'items-center', 'flex-wrap', 'justify-between', 'gap-4']">
         <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
           VRM Axis Flip
@@ -560,23 +711,64 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div :class="['flex', 'items-center', 'justify-between', 'gap-4', 'flex-wrap']">
-        <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
-          Smoothing
-        </div>
-        <label :class="['flex', 'items-center', 'gap-3']">
-          <div :class="['text-xs', 'text-neutral-500']">
-            {{ (smoothing * 100).toFixed(0) }}%
+      <!-- One Euro Filter -->
+      <div :class="['space-y-2']">
+        <div :class="['flex', 'items-center', 'justify-between', 'gap-2', 'flex-wrap']">
+          <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
+            Filter (One Euro)
           </div>
-          <input
-            v-model.number="smoothing"
-            type="range"
-            min="0"
-            max="0.95"
-            step="0.05"
-            :class="['w-32']"
+          <!-- Preset pills -->
+          <div :class="['flex', 'gap-1', 'flex-wrap']">
+            <button
+              v-for="(preset, key) in OEF_PRESETS"
+              :key="key"
+              :class="[
+                'rounded-lg', 'px-2.5', 'py-1', 'text-xs', 'font-500', 'transition-colors',
+                activePreset === key
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700',
+              ]"
+              @click="applyPreset(key as OEFPresetKey)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Preset description -->
+        <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+          {{ OEF_PRESETS[activePreset].description }}
+        </div>
+
+        <!-- Manual sliders -->
+        <div :class="['grid', 'gap-2', 'sm:grid-cols-3']">
+          <label
+            v-for="({ min, max, step, hint }, key) in ({
+              minCutoff: { min: 0.1, max: 10, step: 0.1, hint: 'lower = smoother at rest' },
+              beta: { min: 0, max: 1, step: 0.01, hint: 'higher = less lag on fast move' },
+              dCutoff: { min: 0.1, max: 5, step: 0.1, hint: 'derivative cutoff (Hz)' },
+            } as Record<string, { min: number; max: number; step: number; hint: string }>)"
+            :key="key"
+            :class="['flex', 'flex-col', 'gap-1']"
           >
-        </label>
+            <div :class="['flex', 'justify-between', 'items-baseline']">
+              <span :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">{{ key }}</span>
+              <span :class="['text-xs', 'tabular-nums', 'text-neutral-500']">{{ (oefConfig as Record<string, number>)[key].toFixed(2) }}</span>
+            </div>
+            <input
+              :value="(oefConfig as Record<string, number>)[key]"
+              type="range"
+              :min="min"
+              :max="max"
+              :step="step"
+              :class="['w-full']"
+              @input="(e) => { (oefConfig as Record<string, number>)[key] = Number((e.target as HTMLInputElement).value) }"
+            >
+            <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ hint }}
+            </div>
+          </label>
+        </div>
       </div>
 
       <div :class="['text-xs', 'text-neutral-500']">
