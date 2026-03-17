@@ -7,8 +7,12 @@ import { ThreeScene } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { SceneLive2D } from '@proj-airi/stage-ui/components/scenes'
 import { useLive2d } from '@proj-airi/stage-ui/stores/live2d'
+import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import { useSettings } from '@proj-airi/stage-ui/stores/settings'
 import { Checkbox } from '@proj-airi/ui'
+import { useIntervalFn } from '@vueuse/core'
+import { generateText } from '@xsai/generate-text'
+import { message } from '@xsai/utils-chat'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
 
@@ -216,14 +220,70 @@ const prevPoseTargets = ref<VrmPoseTargets>()
 const prevPoseForward = ref<Vector3Like>()
 
 // ── VRM driver ─────────────────────────────────────────────────────────────
+//
+// NOTICE: We keep the applier as a stable const (alpha=1, snap mode) and
+// implement smoothing ourselves by lerp-ing the direction/pole vectors before
+// passing them to the applier.  Recreating the applier mid-session would clear
+// the restDirLocal cache; if the VRM is not in T-pose at that moment,
+// ensureRestDirection would capture wrong reference directions that corrupt all
+// subsequent rotations.
 
 const vrmPoseApplier = createVrmPoseApplier({ alpha: 1 })
 
+// Per-bone lerped state — direction and pole vectors, kept between frames
+const _vrmDirs: Partial<Record<string, { x: number, y: number, z: number }>> = {}
+const _vrmPoles: Partial<Record<string, { x: number, y: number, z: number }>> = {}
+
+// alpha: 0 = freeze, 1 = snap (no smoothing)
+const vrmSmoothing = ref({
+  alpha: 0.4,
+  minDotBeforeReject: -0.2,
+  minPoleDotBeforeReject: -0.2,
+})
+
+function _lerpDir(
+  prev: { x: number, y: number, z: number } | undefined,
+  next: { x: number, y: number, z: number },
+  alpha: number,
+): { x: number, y: number, z: number } {
+  if (!prev || alpha >= 1)
+    return { x: next.x, y: next.y, z: next.z }
+  const x = prev.x + (next.x - prev.x) * alpha
+  const y = prev.y + (next.y - prev.y) * alpha
+  const z = prev.z + (next.z - prev.z) * alpha
+  // Re-normalize so the direction stays unit-length after interpolation
+  const len = Math.hypot(x, y, z)
+  if (len < 1e-6)
+    return { x: next.x, y: next.y, z: next.z }
+  return { x: x / len, y: y / len, z: z / len }
+}
+
 function onVrmFrame(vrm: Parameters<typeof vrmPoseApplier.applyPoseDirectionsToVrm>[0]) {
-  const targets = latestPoseTargets.value
-  if (!targets)
+  const rawTargets = latestPoseTargets.value
+  if (!rawTargets)
     return
-  vrmPoseApplier.applyPoseTargetsToVrm(vrm, targets)
+
+  const alpha = vrmSmoothing.value.alpha
+  const smoothed: VrmPoseTargets = {}
+
+  for (const key of Object.keys(rawTargets) as (keyof VrmPoseTargets)[]) {
+    const t = rawTargets[key]
+    if (!t)
+      continue
+
+    const dir = _lerpDir(_vrmDirs[key], t.dir as { x: number, y: number, z: number }, alpha)
+    _vrmDirs[key] = dir
+
+    let pole: { x: number, y: number, z: number } | undefined
+    if (t.pole) {
+      pole = _lerpDir(_vrmPoles[key], t.pole as { x: number, y: number, z: number }, alpha)
+      _vrmPoles[key] = pole
+    }
+
+    smoothed[key] = { dir, pole }
+  }
+
+  vrmPoseApplier.applyPoseTargetsToVrm(vrm, smoothed)
 }
 
 const vrmFrameHook = (vrm: Parameters<typeof vrmPoseApplier.applyPoseDirectionsToVrm>[0]) => onVrmFrame(vrm)
@@ -429,6 +489,11 @@ function applyFaceToLive2d(face: FaceState): void {
 
 const settingsStore = useSettings()
 const { stageModelRenderer, stageModelSelected, stageModelSelectedUrl, stageViewControlsEnabled } = storeToRefs(settingsStore)
+
+// ── Providers store (for LLM Vision) ───────────────────────────────────────
+
+const providersStore = useProvidersStore()
+const { persistedChatProvidersMetadata } = storeToRefs(providersStore)
 
 // ── Debug summary ──────────────────────────────────────────────────────────
 
@@ -643,6 +708,140 @@ onUnmounted(() => {
   sceneRef.value?.setVrmFrameHook(undefined)
   stop()
 })
+
+// ── LLM Vision Analysis ────────────────────────────────────────────────────
+//
+// Periodically captures a frame from the camera feed and sends it to a
+// vision-capable LLM for real-time description.  Tracks per-frame latency
+// (capture → LLM response) and keeps a rolling history of results.
+
+const llmEnabled = ref(false)
+const llmProvider = ref('')
+const llmModel = ref('')
+// Interval between captures (seconds)
+const llmInterval = ref(5)
+const llmMaxTokens = ref(200)
+const llmPrompt = ref(
+  'Describe what you see in this camera frame in 1–2 sentences. Focus on the person\'s facial expression, head pose, and any notable action or gesture.',
+)
+
+interface LlmEntry {
+  id: number
+  frameDataUrl: string
+  // wall-clock for display
+  capturedAt: number
+  // performance.now() snapshot for precise latency
+  capturePerf: number
+  latencyMs: number | null
+  text: string
+  status: 'pending' | 'done' | 'error'
+  error?: string
+}
+
+const llmHistory = ref<LlmEntry[]>([])
+let _llmEntryId = 0
+// Keep at most 20 entries to avoid unbounded memory growth
+const LLM_MAX_HISTORY = 20
+
+/**
+ * Captures the current video frame onto an off-screen canvas and returns a
+ * compressed JPEG data URL together with timing metadata.
+ * Scales down to ≤640 px wide so the base64 payload stays manageable.
+ */
+function captureCurrentFrame(): { dataUrl: string, capturePerf: number, capturedAt: number } | null {
+  const video = videoRef.value
+  if (!video || video.readyState < 2)
+    return null
+
+  const sw = video.videoWidth || 640
+  const sh = video.videoHeight || 480
+  const maxW = 640
+  const scale = sw > maxW ? maxW / sw : 1
+  const dw = Math.round(sw * scale)
+  const dh = Math.round(sh * scale)
+
+  const offscreen = document.createElement('canvas')
+  offscreen.width = dw
+  offscreen.height = dh
+  const ctx = offscreen.getContext('2d')
+  if (!ctx)
+    return null
+
+  ctx.drawImage(video, 0, 0, dw, dh)
+  const capturePerf = performance.now()
+  const capturedAt = Date.now()
+  const dataUrl = offscreen.toDataURL('image/jpeg', 0.75)
+  return { dataUrl, capturePerf, capturedAt }
+}
+
+/** Captures one frame and sends it to the configured LLM for analysis. */
+async function runLlmAnalysis() {
+  if (!llmEnabled.value || !llmProvider.value || !llmModel.value)
+    return
+
+  const frame = captureCurrentFrame()
+  if (!frame)
+    return
+
+  const config = providersStore.getProviderConfig(llmProvider.value)
+  if (!config)
+    return
+
+  const entry: LlmEntry = {
+    id: _llmEntryId++,
+    frameDataUrl: frame.dataUrl,
+    capturedAt: frame.capturedAt,
+    capturePerf: frame.capturePerf,
+    latencyMs: null,
+    text: '',
+    status: 'pending',
+  }
+
+  llmHistory.value.unshift(entry)
+  if (llmHistory.value.length > LLM_MAX_HISTORY)
+    llmHistory.value.pop()
+
+  try {
+    const result = await generateText({
+      apiKey: (config.apiKey as string | undefined) ?? '',
+      baseURL: (config.baseUrl as string | undefined) ?? '',
+      model: llmModel.value,
+      messages: message.messages(
+        message.user([
+          message.textPart(llmPrompt.value),
+          message.imagePart(frame.dataUrl),
+        ]),
+      ),
+      max_tokens: llmMaxTokens.value,
+    })
+
+    entry.latencyMs = Math.round(performance.now() - frame.capturePerf)
+    entry.text = result.text ?? ''
+    entry.status = 'done'
+  }
+  catch (err) {
+    entry.latencyMs = Math.round(performance.now() - frame.capturePerf)
+    entry.status = 'error'
+    entry.error = err instanceof Error ? err.message : String(err)
+  }
+}
+
+const { pause: pauseLlm, resume: resumeLlm } = useIntervalFn(
+  runLlmAnalysis,
+  computed(() => llmInterval.value * 1000),
+  { immediate: false, immediateCallback: false },
+)
+
+watch(llmEnabled, (enabled) => {
+  if (enabled) {
+    // Fire immediately, then on interval
+    runLlmAnalysis()
+    resumeLlm()
+  }
+  else {
+    pauseLlm()
+  }
+})
 </script>
 
 <template>
@@ -743,6 +942,43 @@ onUnmounted(() => {
               Flip Z
             </div>
             <Checkbox v-model="vrmMapping.flipZ" />
+          </label>
+        </div>
+      </div>
+
+      <!-- VRM Pose Smoothing -->
+      <div :class="['space-y-2']">
+        <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
+          VRM Pose Smoothing
+        </div>
+        <div :class="['grid', 'gap-2', 'sm:grid-cols-3']">
+          <label
+            v-for="({ min, max, step, hint }, key) in ({
+              alpha: { min: 0.01, max: 1, step: 0.01, hint: 'lerp per frame — lower = smoother, higher = snappier' },
+              minDotBeforeReject: { min: -1, max: 0.5, step: 0.05, hint: 'bone flip rejection threshold' },
+              minPoleDotBeforeReject: { min: -1, max: 0.5, step: 0.05, hint: 'pole flip rejection threshold' },
+            } as Record<string, { min: number; max: number; step: number; hint: string }>)"
+            :key="key"
+            :class="['flex', 'flex-col', 'gap-1']"
+          >
+            <div :class="['flex', 'justify-between', 'items-baseline']">
+              <span :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">{{ key }}</span>
+              <span :class="['text-xs', 'tabular-nums', 'text-neutral-500']">
+                {{ (vrmSmoothing as Record<string, number>)[key].toFixed(2) }}
+              </span>
+            </div>
+            <input
+              :value="(vrmSmoothing as Record<string, number>)[key]"
+              type="range"
+              :min="min"
+              :max="max"
+              :step="step"
+              :class="['w-full']"
+              @input="(e) => { (vrmSmoothing as Record<string, number>)[key] = Number((e.target as HTMLInputElement).value) }"
+            >
+            <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+              {{ hint }}
+            </div>
           </label>
         </div>
       </div>
@@ -996,6 +1232,206 @@ onUnmounted(() => {
             {{ ((modelParameters as Record<string, number>)[key] ?? 0).toFixed(2) }}
           </span>
         </label>
+      </div>
+    </div>
+
+    <!-- LLM Vision Analysis -->
+    <div :class="['rounded-2xl', 'border', 'border-neutral-300/40', 'dark:border-neutral-700/40', 'p-3', 'space-y-3']">
+      <div :class="['flex', 'items-start', 'justify-between', 'gap-3', 'flex-wrap']">
+        <div :class="['space-y-1']">
+          <div :class="['font-600', 'text-sm']">
+            LLM Vision Analysis
+          </div>
+          <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+            Captures camera frames at a configurable interval and sends them to a vision-capable LLM.
+            Displays per-frame latency (capture → response) and a rolling history.
+          </div>
+        </div>
+
+        <label :class="['flex', 'items-center', 'gap-3']">
+          <div :class="['text-sm', 'text-neutral-600', 'dark:text-neutral-300']">
+            {{ llmEnabled ? 'Running' : 'Stopped' }}
+          </div>
+          <Checkbox v-model="llmEnabled" :disabled="!llmProvider || !llmModel" />
+        </label>
+      </div>
+
+      <!-- Provider selector -->
+      <div :class="['space-y-1.5']">
+        <div :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">
+          Provider
+        </div>
+        <div v-if="persistedChatProvidersMetadata.length === 0" :class="['text-xs', 'text-amber-500']">
+          No chat providers configured. Go to Settings → Providers to add one.
+        </div>
+        <div v-else :class="['flex', 'flex-wrap', 'gap-1.5']">
+          <button
+            v-for="p in persistedChatProvidersMetadata"
+            :key="p.id"
+            :class="[
+              'rounded-lg', 'px-3', 'py-1.5', 'text-xs', 'font-500', 'transition-colors',
+              llmProvider === p.id
+                ? 'bg-primary-500 text-white'
+                : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700',
+            ]"
+            @click="llmProvider = p.id"
+          >
+            {{ p.localizedName || p.name }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Model input -->
+      <div :class="['space-y-1.5']">
+        <div :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">
+          Model (vision-capable)
+        </div>
+        <input
+          v-model="llmModel"
+          type="text"
+          placeholder="e.g. gpt-4o, llama-3.2-11b-vision-preview…"
+          :class="['w-full', 'rounded-lg', 'border', 'border-neutral-300/60', 'bg-white', 'px-3', 'py-1.5', 'text-sm', 'dark:bg-neutral-900/60', 'dark:border-neutral-700/60', 'outline-none', 'focus:border-primary-400']"
+        >
+      </div>
+
+      <!-- Interval + max tokens -->
+      <div :class="['grid', 'gap-3', 'sm:grid-cols-2']">
+        <label :class="['flex', 'flex-col', 'gap-1']">
+          <div :class="['flex', 'justify-between', 'items-baseline']">
+            <span :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">Capture interval</span>
+            <span :class="['text-xs', 'tabular-nums', 'text-neutral-500']">{{ llmInterval }}s</span>
+          </div>
+          <input v-model.number="llmInterval" type="range" min="1" max="30" step="1" :class="['w-full']">
+          <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+            Seconds between frame captures
+          </div>
+        </label>
+        <label :class="['flex', 'flex-col', 'gap-1']">
+          <div :class="['flex', 'justify-between', 'items-baseline']">
+            <span :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">Max tokens</span>
+            <span :class="['text-xs', 'tabular-nums', 'text-neutral-500']">{{ llmMaxTokens }}</span>
+          </div>
+          <input v-model.number="llmMaxTokens" type="range" min="50" max="500" step="50" :class="['w-full']">
+          <div :class="['text-xs', 'text-neutral-400', 'dark:text-neutral-500']">
+            LLM response length cap
+          </div>
+        </label>
+      </div>
+
+      <!-- Prompt -->
+      <div :class="['space-y-1.5']">
+        <div :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">
+          Prompt
+        </div>
+        <textarea
+          v-model="llmPrompt"
+          rows="2"
+          :class="['w-full', 'rounded-lg', 'border', 'border-neutral-300/60', 'bg-white', 'px-3', 'py-2', 'text-sm', 'dark:bg-neutral-900/60', 'dark:border-neutral-700/60', 'resize-none', 'outline-none', 'focus:border-primary-400']"
+        />
+      </div>
+
+      <!-- Current frame -->
+      <div v-if="llmHistory.length > 0" :class="['space-y-2']">
+        <div :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">
+          Latest Frame
+        </div>
+        <div :class="['flex', 'gap-3', 'items-start']">
+          <!-- Thumbnail -->
+          <div :class="['shrink-0', 'rounded-lg', 'overflow-hidden', 'border', 'border-neutral-300/40', 'dark:border-neutral-700/40']">
+            <img
+              :src="llmHistory[0].frameDataUrl"
+              :class="['w-32', 'h-auto', 'block']"
+              alt="Captured frame"
+            >
+          </div>
+          <!-- Meta + text -->
+          <div :class="['flex-1', 'min-w-0', 'space-y-1.5']">
+            <div :class="['flex', 'gap-2', 'items-center', 'flex-wrap']">
+              <!-- Status badge -->
+              <span
+                :class="[
+                  'rounded-md', 'px-2', 'py-0.5', 'text-xs', 'font-500',
+                  llmHistory[0].status === 'done' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                  : llmHistory[0].status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+                ]"
+              >{{ llmHistory[0].status }}</span>
+              <!-- Latency -->
+              <span
+                v-if="llmHistory[0].latencyMs != null"
+                :class="['text-xs', 'tabular-nums', 'font-500', 'text-neutral-500']"
+              >{{ llmHistory[0].latencyMs }}ms</span>
+              <!-- Capture time -->
+              <span :class="['text-xs', 'text-neutral-400']">
+                {{ new Date(llmHistory[0].capturedAt).toLocaleTimeString() }}
+              </span>
+            </div>
+            <!-- Pending spinner -->
+            <div
+              v-if="llmHistory[0].status === 'pending'"
+              :class="['flex', 'items-center', 'gap-2', 'text-xs', 'text-neutral-500']"
+            >
+              <div :class="['i-solar:spinner-line-duotone', 'animate-spin', 'text-base']" />
+              Waiting for LLM…
+            </div>
+            <!-- Error -->
+            <div
+              v-else-if="llmHistory[0].status === 'error'"
+              :class="['text-xs', 'text-red-500', 'break-words']"
+            >
+              {{ llmHistory[0].error }}
+            </div>
+            <!-- Response text -->
+            <div
+              v-else
+              :class="['text-sm', 'text-neutral-700', 'dark:text-neutral-300', 'leading-relaxed']"
+            >
+              {{ llmHistory[0].text }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div v-if="llmHistory.length > 1" :class="['space-y-2']">
+        <div :class="['text-xs', 'font-500', 'text-neutral-600', 'dark:text-neutral-300']">
+          History ({{ llmHistory.length - 1 }} previous)
+        </div>
+        <div :class="['max-h-80', 'overflow-y-auto', 'space-y-2', 'pr-1']">
+          <div
+            v-for="entry in llmHistory.slice(1)"
+            :key="entry.id"
+            :class="['flex', 'gap-3', 'items-start', 'rounded-xl', 'border', 'border-neutral-200/60', 'dark:border-neutral-700/40', 'p-2']"
+          >
+            <img
+              :src="entry.frameDataUrl"
+              :class="['w-16', 'h-auto', 'shrink-0', 'rounded-md', 'block']"
+              alt="Historical frame"
+            >
+            <div :class="['flex-1', 'min-w-0', 'space-y-1']">
+              <div :class="['flex', 'gap-2', 'items-center', 'flex-wrap']">
+                <span
+                  :class="[
+                    'rounded-md', 'px-1.5', 'py-0.5', 'text-xs', 'font-500',
+                    entry.status === 'done' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                    : entry.status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+                  ]"
+                >{{ entry.status }}</span>
+                <span
+                  v-if="entry.latencyMs != null"
+                  :class="['text-xs', 'tabular-nums', 'font-500', 'text-neutral-500']"
+                >{{ entry.latencyMs }}ms</span>
+                <span :class="['text-xs', 'text-neutral-400']">
+                  {{ new Date(entry.capturedAt).toLocaleTimeString() }}
+                </span>
+              </div>
+              <div :class="['text-xs', 'text-neutral-600', 'dark:text-neutral-300', 'leading-relaxed', 'line-clamp-2', 'break-words']">
+                {{ entry.status === 'error' ? entry.error : entry.text }}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
