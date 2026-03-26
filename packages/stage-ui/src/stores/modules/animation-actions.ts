@@ -26,6 +26,11 @@ export interface ActionEntry {
    * When false, the animation plays once then returns to a random idle action.
    */
   loop: boolean
+  /**
+   * Speaking actions are cycled through while AIRI is outputting text.
+   * When none are marked, all enabled non-idle actions are used as fallback.
+   */
+  isSpeakingAction: boolean
   /** Optional background audio URL (blob or external) */
   bgMusicUrl?: string
   /** Optional background video URL (shown behind Three.js canvas) */
@@ -47,6 +52,7 @@ interface StoredCustomAction {
   durationMs?: number
   isIdle: boolean
   loop: boolean
+  isSpeakingAction: boolean
   bgMusicFile?: File
   bgVideoFile?: File
   fgVideoFile?: File
@@ -62,6 +68,7 @@ const BUILTIN_DEFAULTS = {
   isBuiltin: true as const,
   isIdle: false,
   loop: false,
+  isSpeakingAction: false,
   durationMs: undefined as number | undefined,
   enabled: true,
   importedAt: 0,
@@ -136,6 +143,25 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     return idleActions[Math.floor(Math.random() * idleActions.length)].id
   }
 
+  /**
+   * Pick a random action for speaking playback, avoiding the currently playing action when possible.
+   * Uses actions marked as `isSpeakingAction`; falls back to all enabled non-idle actions if none are marked.
+   * Returns null if no eligible actions are available.
+   */
+  function pickRandomSpeakingAction(): string | null {
+    const speakingActions = actions.value.filter(a => a.enabled && a.isSpeakingAction)
+    const pool = speakingActions.length > 0
+      ? speakingActions
+      : actions.value.filter(a => a.enabled && !a.isIdle)
+    if (pool.length === 0)
+      return null
+    // Prefer a different action than the current one to keep cycling varied
+    const candidates = pool.length > 1
+      ? pool.filter(a => a.id !== currentActionId.value)
+      : pool
+    return candidates[Math.floor(Math.random() * candidates.length)].id
+  }
+
   async function loadCustomActionsFromIndexedDB() {
     await until(loading).toBe(false)
     loading.value = true
@@ -169,9 +195,10 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           vrmaUrl,
           isBuiltin: false,
           durationMs: val.durationMs,
-          // Stored actions before this field existed default to non-idle, no loop
+          // Stored actions before this field existed default to non-idle, no loop, not a speaking action
           isIdle: val.isIdle ?? false,
           loop: val.loop ?? false,
+          isSpeakingAction: val.isSpeakingAction ?? false,
           bgMusicUrl,
           bgVideoUrl,
           fgVideoUrl,
@@ -212,6 +239,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       durationMs,
       isIdle: false,
       loop: false,
+      isSpeakingAction: false,
       enabled: true,
       importedAt,
     }
@@ -224,6 +252,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       durationMs,
       isIdle: false,
       loop: false,
+      isSpeakingAction: false,
       enabled: true,
       importedAt,
     }
@@ -256,6 +285,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     enabled?: boolean
     isIdle?: boolean
     loop?: boolean
+    isSpeakingAction?: boolean
     /** Pass a File to upload; pass null to clear; omit to keep existing */
     bgMusicFile?: File | null
     bgVideoFile?: File | null
@@ -300,6 +330,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       enabled: patch.enabled ?? existing.enabled,
       isIdle: patch.isIdle ?? existing.isIdle,
       loop: patch.loop ?? existing.loop,
+      isSpeakingAction: patch.isSpeakingAction ?? existing.isSpeakingAction,
       bgMusicUrl,
       bgVideoUrl,
       fgVideoUrl,
@@ -316,6 +347,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           enabled: patch.enabled ?? stored.enabled,
           isIdle: patch.isIdle ?? stored.isIdle,
           loop: patch.loop ?? stored.loop,
+          isSpeakingAction: patch.isSpeakingAction ?? stored.isSpeakingAction,
           bgMusicFile: 'bgMusicFile' in patch ? (patch.bgMusicFile ?? undefined) : stored.bgMusicFile,
           bgVideoFile: 'bgVideoFile' in patch ? (patch.bgVideoFile ?? undefined) : stored.bgVideoFile,
           fgVideoFile: 'fgVideoFile' in patch ? (patch.fgVideoFile ?? undefined) : stored.fgVideoFile,
@@ -359,5 +391,6 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     playAction,
     stopAction,
     pickRandomIdle,
+    pickRandomSpeakingAction,
   }
 })

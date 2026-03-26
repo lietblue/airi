@@ -472,12 +472,45 @@ chatHookCleanups.push(onBeforeMessageComposed(async () => {
   })
 }))
 
+// Tracks whether AIRI is currently streaming output, used to cycle non-idle animations.
+const isSpeaking = ref(false)
+// Guards against re-entering a speaking animation on every token.
+let speakingAnimationStarted = false
+
+/** Play the next speaking action; no-op if none available. */
+function playNextSpeakingAction() {
+  const nextId = animationActionsStore.pickRandomSpeakingAction()
+  if (nextId)
+    animationActionsStore.playAction(nextId)
+}
+
+/**
+ * Called when the current VRM animation finishes.
+ * Cycles to another non-idle action if AIRI is speaking, otherwise returns to idle.
+ */
+function handleAnimationComplete() {
+  if (isSpeaking.value)
+    playNextSpeakingAction()
+  else
+    animationActionsStore.stopAction()
+}
+
 chatHookCleanups.push(onBeforeSend(async () => {
   currentMotion.value = { group: EmotionThinkMotionName }
+  // Play the "thinking" pose while waiting for the first token
+  if (stageModelRenderer.value === 'vrm')
+    animationActionsStore.playAction('thinking')
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal) => {
   currentChatIntent?.writeLiteral(literal)
+  // On the first token, switch from thinking to an active speaking animation
+  if (!speakingAnimationStarted) {
+    speakingAnimationStarted = true
+    isSpeaking.value = true
+    if (stageModelRenderer.value === 'vrm')
+      playNextSpeakingAction()
+  }
 }))
 
 chatHookCleanups.push(onTokenSpecial(async (special) => {
@@ -493,6 +526,11 @@ chatHookCleanups.push(onStreamEnd(async () => {
 chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
   currentChatIntent?.end()
   currentChatIntent = null
+  // Stop cycling speaking animations and return to idle
+  isSpeaking.value = false
+  speakingAnimationStarted = false
+  if (stageModelRenderer.value === 'vrm')
+    animationActionsStore.stopAction()
   // const res = await embed({
   //   ...transformersProvider.embed('Xenova/nomic-embed-text-v1'),
   //   input: message,
@@ -624,7 +662,7 @@ defineExpose({
           :paused="paused"
           :show-axes="stageViewControlsEnabled"
           :current-audio-source="currentAudioSource"
-          @animation-complete="animationActionsStore.stopAction()"
+          @animation-complete="handleAnimationComplete"
           @error="console.error"
         />
         <!-- Foreground video: rendered above the Three.js canvas -->

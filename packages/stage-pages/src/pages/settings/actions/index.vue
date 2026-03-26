@@ -109,6 +109,10 @@ async function toggleEnabled(action: ActionEntry) {
   await store.updateAction(action.id, { enabled: !action.enabled })
 }
 
+async function toggleSpeakingAction(action: ActionEntry) {
+  await store.updateAction(action.id, { isSpeakingAction: !action.isSpeakingAction })
+}
+
 // ---- Import .vrma ----
 const importName = ref('')
 const importDescription = ref('')
@@ -289,6 +293,13 @@ function formatDuration(ms?: number) {
                   <div class="i-solar:videocamera-record-bold text-xs" />
                   {{ t('settings.pages.actions.badges.video') }}
                 </span>
+                <span
+                  v-if="action.isSpeakingAction"
+                  class="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700 dark:bg-rose-900/50 dark:text-rose-300"
+                >
+                  <div class="i-solar:microphone-bold text-xs" />
+                  {{ t('settings.pages.actions.badges.speaking') }}
+                </span>
               </div>
               <div class="line-clamp-1 mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
                 {{ action.description }}
@@ -297,6 +308,18 @@ function formatDuration(ms?: number) {
 
             <!-- Action buttons -->
             <div class="flex shrink-0 items-center gap-1">
+              <button
+                :class="[
+                  'p-1.5 rounded-lg transition-colors',
+                  action.isSpeakingAction
+                    ? 'text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                    : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
+                ]"
+                :title="action.isSpeakingAction ? t('settings.pages.actions.tooltips.remove-speaking') : t('settings.pages.actions.tooltips.add-speaking')"
+                @click="toggleSpeakingAction(action)"
+              >
+                <div :class="[action.isSpeakingAction ? 'i-solar:microphone-bold' : 'i-solar:microphone-slash-bold']" />
+              </button>
               <button
                 :class="[
                   'p-1.5 rounded-lg transition-colors',
