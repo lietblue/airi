@@ -50,6 +50,9 @@ const LOCALFORAGE_KEY_PREFIX = 'animation-action-'
 // localforage.iterate will pick it up and try to parse it as a StoredCustomAction, causing
 // URL.createObjectURL(undefined) to throw and silently breaking the entire load.
 const BUILTIN_OVERRIDES_KEY = 'airi-builtin-action-overrides'
+// NOTICE: Legacy key that was accidentally prefixed with LOCALFORAGE_KEY_PREFIX.
+// Kept for one-time migration only; data is moved to BUILTIN_OVERRIDES_KEY then deleted.
+const BUILTIN_OVERRIDES_KEY_LEGACY = 'animation-action-builtin-overrides'
 
 type BuiltinOverrides = Record<string, {
   enabled?: boolean
@@ -193,11 +196,22 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     loading.value = true
 
     try {
+      // Migrate legacy builtin overrides key if it exists
+      const legacyOverrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY_LEGACY)
+      if (legacyOverrides) {
+        const existing = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
+        await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, { ...legacyOverrides, ...existing })
+        await localforage.removeItem(BUILTIN_OVERRIDES_KEY_LEGACY)
+      }
+
       const builtinOverrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
       const customEntries: ActionEntry[] = []
 
       await localforage.iterate<StoredCustomAction, void>((val, key) => {
         if (!key.startsWith(LOCALFORAGE_KEY_PREFIX))
+          return
+        // Guard: skip any entry that isn't a valid StoredCustomAction (e.g. leftover legacy keys)
+        if (!(val.file instanceof File))
           return
 
         // Create blob URLs for the stored files
