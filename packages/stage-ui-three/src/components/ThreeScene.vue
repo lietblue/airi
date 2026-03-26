@@ -53,15 +53,19 @@ const props = withDefaults(defineProps<{
   showAxes?: boolean
   idleAnimation?: string
   paused?: boolean
+  /** When false, plays the animation once and emits animationComplete on finish */
+  loop?: boolean
 }>(), {
   showAxes: false,
   idleAnimation: new URL('../assets/vrm/animations/idle_loop.vrma', import.meta.url).href,
   paused: false,
+  loop: true,
 })
 
 const emit = defineEmits<{
   (e: 'loadModelProgress', value: number): void
   (e: 'error', value: unknown): void
+  (e: 'animationComplete'): void
 }>()
 
 type ModelPhase = 'no-model' | 'loading' | 'ready' | 'error'
@@ -705,6 +709,7 @@ defineExpose({
         :model-src="props.modelSrc"
         :idle-animation="props.idleAnimation"
         :paused="props.paused"
+        :loop="props.loop"
         :env-select="envSelect"
         :sky-box-intensity="skyBoxIntensity"
         :npr-irr-s-h="irrSHTex"
@@ -721,6 +726,7 @@ defineExpose({
         @look-at-target="onVRMModelLookAtTarget"
         @error="onVRMModelError"
         @loaded="onVRMModelLoaded"
+        @animation-complete="() => emit('animationComplete')"
       />
       <TresAxesHelper v-if="props.showAxes" :size="1" />
     </TresCanvas>

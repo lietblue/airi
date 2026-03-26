@@ -8,6 +8,7 @@
 
 import type { VRM } from '@pixiv/three-vrm'
 import type {
+  AnimationAction,
   Group,
   Material,
   Object3D,
@@ -15,6 +16,7 @@ import type {
   ShaderMaterial,
   SphericalHarmonics3,
   Texture,
+
   WebGLRenderer,
 } from 'three'
 import type { Ref, WatchStopHandle } from 'vue'
@@ -29,6 +31,7 @@ import { until, useMouse } from '@vueuse/core'
 import {
   AnimationMixer,
   Box3,
+  LoopOnce,
   MathUtils,
   Mesh,
   MeshPhysicalMaterial,
@@ -105,6 +108,8 @@ const props = withDefaults(defineProps<{
   idleAnimation: string
   // loadAnimations?: string[]
   paused?: boolean
+  /** When false, plays the animation once and emits animationComplete on finish */
+  loop?: boolean
 
   envSelect: string
   skyBoxIntensity: number
@@ -120,6 +125,7 @@ const props = withDefaults(defineProps<{
   camera: PerspectiveCamera
 }>(), {
   paused: false,
+  loop: true,
 })
 /*
   * Emits:
@@ -136,6 +142,7 @@ const emit = defineEmits<{
 
   (e: 'error', value: unknown): void
   (e: 'loaded', value: string): void
+  (e: 'animationComplete'): void
 }>()
 
 const {
@@ -144,6 +151,7 @@ const {
   idleAnimation,
   // loadAnimations, // TBC
   paused,
+  loop,
 
   envSelect,
   skyBoxIntensity,
@@ -175,6 +183,8 @@ let stopCameraWatch: WatchStopHandle | undefined
 
 // Animation related ref
 const vrmAnimationMixer = ref<AnimationMixer>()
+/** Currently playing animation action — kept for crossfade transitions */
+const currentAnimationAction = ref<AnimationAction>()
 const { onBeforeRender, stop, start } = useLoop()
 
 type VrmFrameHook = (vrm: VRM, delta: number) => void
@@ -695,7 +705,14 @@ async function loadModel() {
 
     // play animation
     nextVrmAnimationMixer = new AnimationMixer(_vrm.scene)
-    nextVrmAnimationMixer.clipAction(clip).play()
+    const clipAction = nextVrmAnimationMixer.clipAction(clip)
+    if (!loop.value) {
+      clipAction.setLoop(LoopOnce, 1)
+      clipAction.clampWhenFinished = true
+      nextVrmAnimationMixer.addEventListener('finished', onAnimationFinished)
+    }
+    clipAction.play()
+    currentAnimationAction.value = clipAction
 
     nextVrmEmote = useVRMEmote(_vrm)
 
@@ -792,6 +809,60 @@ async function loadModel() {
   }
 }
 
+// NOTICE: crossfade duration for animation transitions (seconds)
+const ANIMATION_CROSSFADE_DURATION = 0.35
+
+/**
+ * Reload just the animation without reloading the VRM model.
+ * Uses AnimationMixer.crossFadeTo() for a smooth blend between animations.
+ * Called when idleAnimation prop changes after model is already loaded.
+ */
+async function reloadAnimation() {
+  if (!vrm.value || !vrmAnimationMixer.value)
+    return
+
+  try {
+    const animation = await loadVRMAnimation(idleAnimation.value)
+    const clip = await clipFromVRMAnimation(vrm.value, animation)
+    if (!clip)
+      return
+
+    reAnchorRootPositionTrack(clip, vrm.value)
+
+    const mixer = vrmAnimationMixer.value
+    // Remove any stale 'finished' listeners before adding new ones to avoid accumulation
+    mixer.removeEventListener('finished', onAnimationFinished)
+
+    const newAction = mixer.clipAction(clip)
+    newAction.reset()
+
+    if (!loop.value) {
+      newAction.setLoop(LoopOnce, 1)
+      newAction.clampWhenFinished = true
+      mixer.addEventListener('finished', onAnimationFinished)
+    }
+
+    const prevAction = currentAnimationAction.value
+    if (prevAction && prevAction !== newAction) {
+      // Crossfade from the previous action into the new one
+      newAction.play()
+      prevAction.crossFadeTo(newAction, ANIMATION_CROSSFADE_DURATION, true)
+    }
+    else {
+      newAction.play()
+    }
+
+    currentAnimationAction.value = newAction
+  }
+  catch (err) {
+    console.error('[VRMModel] reloadAnimation failed:', err)
+  }
+}
+
+function onAnimationFinished() {
+  emit('animationComplete')
+}
+
 onMounted(async () => {
   // watch if the model needs to be reloaded
   // Registered BEFORE the initial load to avoid missing src changes
@@ -799,6 +870,13 @@ onMounted(async () => {
   watch(modelSrc, (newSrc, oldSrc) => {
     if (newSrc !== oldSrc) {
       loadModel()
+    }
+  })
+
+  // watch if the animation needs to be changed without reloading the model
+  watch(idleAnimation, (newUrl, oldUrl) => {
+    if (newUrl !== oldUrl) {
+      reloadAnimation()
     }
   })
 

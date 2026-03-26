@@ -14,7 +14,6 @@ import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync
 import { createPlaybackManager, createSpeechPipeline } from '@proj-airi/pipelines-audio'
 import { Live2DScene, useLive2d } from '@proj-airi/stage-ui-live2d'
 import { ThreeScene } from '@proj-airi/stage-ui-three'
-import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { createQueue } from '@proj-airi/stream-kit'
 import { useBroadcastChannel } from '@vueuse/core'
 // import { createTransformers } from '@xsai-transformers/embed'
@@ -30,6 +29,7 @@ import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, Emoti
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
 import { useChatOrchestratorStore } from '../../stores/chat'
 import { useAiriCardStore } from '../../stores/modules'
+import { useAnimationActionsStore } from '../../stores/modules/animation-actions'
 import { useSpeechStore } from '../../stores/modules/speech'
 import { useProvidersStore } from '../../stores/providers'
 import { useSettings } from '../../stores/settings'
@@ -68,6 +68,8 @@ const {
   live2dMaxFps,
 } = storeToRefs(settingsStore)
 const { mouthOpenSize } = storeToRefs(useSpeakingStore())
+const animationActionsStore = useAnimationActionsStore()
+const { currentActionUrl, currentAction, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl } = storeToRefs(animationActionsStore)
 const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
 
@@ -518,7 +520,18 @@ if (typeof window !== 'undefined') {
   })
 }
 
+// NOTICE: How often to rotate to a different idle animation (ms).
+// Keeps the character feeling alive by cycling through idle poses.
+const IDLE_ROTATION_INTERVAL_MS = 45_000
+
+let idleRotationTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
+  animationActionsStore.loadCustomActionsFromIndexedDB()
+  idleRotationTimer = setInterval(() => {
+    if (animationActionsStore.currentAction?.isIdle)
+      animationActionsStore.stopAction()
+  }, IDLE_ROTATION_INTERVAL_MS)
   db.value = drizzle({ connection: { bundles: getImportUrlBundles() } })
   await db.value.execute(`CREATE TABLE memory_test (vec FLOAT[768]);`)
 })
@@ -548,6 +561,8 @@ function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, r
 }
 
 onUnmounted(() => {
+  if (idleRotationTimer)
+    clearInterval(idleRotationTimer)
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
   viewUpdateCleanups.forEach(dispose => dispose?.())
@@ -585,18 +600,51 @@ defineExpose({
         :live2d-shadow-enabled="live2dShadowEnabled"
         :live2d-max-fps="live2dMaxFps"
       />
-      <ThreeScene
+      <div
         v-if="stageModelRenderer === 'vrm' && showStage"
-        ref="vrmViewerRef"
-        v-model:state="componentState"
-        min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
-        :idle-animation="animations.idleLoop.toString()"
-        :paused="paused"
-        :show-axes="stageViewControlsEnabled"
-        :current-audio-source="currentAudioSource"
-        @error="console.error"
-      />
+        class="relative isolate h-full min-h-100 min-w-[50%] w-full flex-1 <lg:min-w-full"
+      >
+        <!-- Background video: rendered behind the Three.js canvas -->
+        <video
+          v-if="currentBgVideoUrl"
+          :src="currentBgVideoUrl"
+          class="absolute inset-0 h-full w-full object-cover"
+          autoplay
+          loop
+          muted
+          playsinline
+        />
+        <ThreeScene
+          ref="vrmViewerRef"
+          v-model:state="componentState"
+          class="relative z-1 h-full w-full"
+          :model-src="stageModelSelectedUrl"
+          :idle-animation="currentActionUrl"
+          :loop="currentAction?.loop ?? true"
+          :paused="paused"
+          :show-axes="stageViewControlsEnabled"
+          :current-audio-source="currentAudioSource"
+          @animation-complete="animationActionsStore.stopAction()"
+          @error="console.error"
+        />
+        <!-- Foreground video: rendered above the Three.js canvas -->
+        <video
+          v-if="currentFgVideoUrl"
+          :src="currentFgVideoUrl"
+          class="pointer-events-none absolute inset-0 z-2 h-full w-full object-cover"
+          autoplay
+          loop
+          muted
+          playsinline
+        />
+        <!-- Background audio -->
+        <audio
+          v-if="currentBgMusicUrl"
+          :src="currentBgMusicUrl"
+          autoplay
+          loop
+        />
+      </div>
     </div>
   </div>
 </template>

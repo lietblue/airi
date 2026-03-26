@@ -810,6 +810,9 @@ pages:
       description: WebSocket 服务器的完整地址(例如，ws://localhost:6121/ws)
       label: WebSocket 服务器地址
       placeholder: ws://localhost:6121/ws
+  actions:
+    description: 配置 AIRI 的动作库及每个动作的媒体
+    title: 动作
   scene:
     description: 配置角色所在环境
     title: 场景

@@ -110,6 +110,12 @@ const menu = computed(() => [
     icon: 'i-solar:sledgehammer-bold-duotone',
     to: '/devtools/model-driver-mediapipe',
   },
+  {
+    title: 'VRMA Animation Player',
+    description: 'Preview built-in and custom .vrma animations on any VRM model',
+    icon: 'i-solar:running-2-bold-duotone',
+    to: '/devtools/vrma-player',
+  },
 ])
 </script>
 
