@@ -881,6 +881,8 @@ pages:
       idle-hint: (randomly rotated while idle)
       loop: Loop
       loop-hint: (loops until stopped; if off, returns to idle after finishing)
+      speaking-action: Speaking action
+      speaking-hint: (cycled through while AIRI is talking)
     media:
       title: Background Media
       bg-music: Background Music
@@ -898,6 +900,7 @@ pages:
       delete: Delete
       add-speaking: Mark as speaking action
       remove-speaking: Remove from speaking actions
+      speaking-label: Speaking
   scene:
     description: Configure the environment where the character lives
     title: Scene

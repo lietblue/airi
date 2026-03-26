@@ -33,7 +33,7 @@ const tools = [
       if (!action.enabled)
         return { success: false, error: `Action "${id}" is disabled.` }
 
-      store.playAction(id)
+      store.playAction(id, 'tool')
       return {
         success: true,
         action: {

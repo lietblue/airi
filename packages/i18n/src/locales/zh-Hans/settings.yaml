@@ -830,12 +830,15 @@ pages:
       loop: 循环
       music: 音乐
       video: 视频
+      speaking: 说话
     edit:
       title: 编辑：{name}
       idle-action: 待机动作
       idle-hint: （在待机时随机轮换）
       loop: 循环
       loop-hint: （循环播放直到停止；关闭则播完后返回待机）
+      speaking-action: 说话动作
+      speaking-hint: （AIRI 说话时循环播放）
     media:
       title: 背景媒体
       bg-music: 背景音乐
@@ -851,6 +854,9 @@ pages:
       edit: 编辑
       preview: 在 VRMA 播放器中预览
       delete: 删除
+      add-speaking: 标记为说话动作
+      remove-speaking: 取消说话动作标记
+      speaking-label: 说话
   scene:
     description: 配置角色所在环境
     title: 场景

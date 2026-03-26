@@ -481,12 +481,14 @@ let speakingAnimationStarted = false
 function playNextSpeakingAction() {
   const nextId = animationActionsStore.pickRandomSpeakingAction()
   if (nextId)
-    animationActionsStore.playAction(nextId)
+    animationActionsStore.playAction(nextId, 'speaking-cycle')
 }
 
 /**
  * Called when the current VRM animation finishes.
  * Cycles to another non-idle action if AIRI is speaking, otherwise returns to idle.
+ * When an externally triggered action (tool/user) finishes during speech, we still
+ * continue with the speaking cycle so the character keeps looking animated.
  */
 function handleAnimationComplete() {
   if (isSpeaking.value)
@@ -499,7 +501,7 @@ chatHookCleanups.push(onBeforeSend(async () => {
   currentMotion.value = { group: EmotionThinkMotionName }
   // Play the "thinking" pose while waiting for the first token
   if (stageModelRenderer.value === 'vrm')
-    animationActionsStore.playAction('thinking')
+    animationActionsStore.playAction('thinking', 'speaking-cycle')
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal) => {
@@ -526,11 +528,16 @@ chatHookCleanups.push(onStreamEnd(async () => {
 chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
   currentChatIntent?.end()
   currentChatIntent = null
-  // Stop cycling speaking animations and return to idle
+  // Stop cycling speaking animations and return to idle.
+  // Only stop if the current action was started by the speaking pipeline — externally
+  // triggered actions (source 'tool' or 'user') are left to finish on their own.
   isSpeaking.value = false
   speakingAnimationStarted = false
-  if (stageModelRenderer.value === 'vrm')
-    animationActionsStore.stopAction()
+  if (stageModelRenderer.value === 'vrm') {
+    const src = animationActionsStore.currentActionSource
+    if (src === 'speaking-cycle' || src === 'idle-rotation')
+      animationActionsStore.stopAction()
+  }
   // const res = await embed({
   //   ...transformersProvider.embed('Xenova/nomic-embed-text-v1'),
   //   input: message,
@@ -568,7 +575,7 @@ onMounted(async () => {
   animationActionsStore.loadCustomActionsFromIndexedDB()
   idleRotationTimer = setInterval(() => {
     if (animationActionsStore.currentAction?.isIdle)
-      animationActionsStore.stopAction()
+      animationActionsStore.stopAction() // source is set to 'idle-rotation' inside stopAction
   }, IDLE_ROTATION_INTERVAL_MS)
   db.value = drizzle({ connection: { bundles: getImportUrlBundles() } })
   await db.value.execute(`CREATE TABLE memory_test (vec FLOAT[768]);`)

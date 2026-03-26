@@ -44,6 +44,27 @@ export interface ActionEntry {
 // NOTICE: localforage key prefix for custom animation actions
 const LOCALFORAGE_KEY_PREFIX = 'animation-action-'
 
+// NOTICE: Builtin action field overrides (enabled, isSpeakingAction, etc.) are stored
+// separately because builtins have no StoredCustomAction record in IndexedDB.
+const BUILTIN_OVERRIDES_KEY = 'animation-action-builtin-overrides'
+
+type BuiltinOverrides = Record<string, {
+  enabled?: boolean
+  isSpeakingAction?: boolean
+  isIdle?: boolean
+  loop?: boolean
+}>
+
+/**
+ * Who triggered the current action. Used to determine whether the speaking pipeline
+ * should stop the action when speech ends, or leave it running to completion.
+ * - `'idle-rotation'`  — automatic idle cycling
+ * - `'speaking-cycle'` — speaking pipeline (thinking / speaking animations)
+ * - `'tool'`           — triggered by an AI tool call or external system
+ * - `'user'`           — direct user interaction
+ */
+export type ActionSource = 'idle-rotation' | 'speaking-cycle' | 'tool' | 'user'
+
 interface StoredCustomAction {
   id: string
   name: string
@@ -121,6 +142,8 @@ function revokeBlobUrls(entry: { vrmaUrl: string, bgMusicUrl?: string, bgVideoUr
 export const useAnimationActionsStore = defineStore('animation-actions', () => {
   const actions = ref<ActionEntry[]>([...builtinActions])
   const currentActionId = ref<string>('idle_loop')
+  /** Tracks who triggered the currently playing action. */
+  const currentActionSource = ref<ActionSource>('idle-rotation')
   const loading = ref(false)
 
   const currentAction = computed(() =>
@@ -167,6 +190,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     loading.value = true
 
     try {
+      const builtinOverrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
       const customEntries: ActionEntry[] = []
 
       await localforage.iterate<StoredCustomAction, void>((val, key) => {
@@ -207,9 +231,12 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         })
       })
 
-      // Merge: built-ins first, then custom sorted by import time (newest first)
+      // Merge: built-ins first (with any persisted overrides), then custom sorted by import time (newest first)
       actions.value = [
-        ...builtinActions,
+        ...builtinActions.map(a => ({
+          ...a,
+          ...builtinOverrides[a.id],
+        })),
         ...customEntries.sort((a, b) => b.importedAt - a.importedAt),
       ]
     }
@@ -336,7 +363,21 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       fgVideoUrl,
     }
 
-    // Persist custom action updates to IndexedDB
+    // Persist: custom actions go to their own record; builtin overrides go to a shared map
+    if (existing.isBuiltin) {
+      const overrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
+      overrides[id] = {
+        ...overrides[id],
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.isSpeakingAction !== undefined ? { isSpeakingAction: patch.isSpeakingAction } : {}),
+        ...(patch.isIdle !== undefined ? { isIdle: patch.isIdle } : {}),
+        ...(patch.loop !== undefined ? { loop: patch.loop } : {}),
+      }
+      await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, overrides)
+        .catch(err => console.error('[animation-actions] failed to save builtin overrides:', err))
+      return
+    }
+
     if (!existing.isBuiltin) {
       const stored = await localforage.getItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`)
       if (stored) {
@@ -360,23 +401,31 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     }
   }
 
-  function playAction(id: string) {
+  /**
+   * Play an action by id, optionally recording who triggered it.
+   * The `source` is used downstream (e.g. Stage.vue) to decide whether the speaking
+   * pipeline should stop the action when speech ends.
+   */
+  function playAction(id: string, source: ActionSource = 'user') {
     const action = actions.value.find(a => a.id === id)
     if (!action || !action.enabled) {
       console.warn(`[animation-actions] action "${id}" not found or disabled`)
       return
     }
     currentActionId.value = id
+    currentActionSource.value = source
   }
 
   /** Stop the current action and return to a randomly selected idle action. */
   function stopAction() {
     currentActionId.value = pickRandomIdle()
+    currentActionSource.value = 'idle-rotation'
   }
 
   return {
     actions,
     currentActionId,
+    currentActionSource,
     currentAction,
     currentActionUrl,
     currentBgMusicUrl,

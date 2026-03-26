@@ -21,6 +21,7 @@ const editDescription = ref('')
 // pending files for the current edit session (null = clear, undefined = unchanged)
 const editIsIdle = ref(false)
 const editLoop = ref(false)
+const editIsSpeakingAction = ref(false)
 const editBgMusicFile = ref<File | null | undefined>(undefined)
 const editBgVideoFile = ref<File | null | undefined>(undefined)
 const editFgVideoFile = ref<File | null | undefined>(undefined)
@@ -35,6 +36,7 @@ function startEdit(action: ActionEntry) {
   editDescription.value = action.description
   editIsIdle.value = action.isIdle
   editLoop.value = action.loop
+  editIsSpeakingAction.value = action.isSpeakingAction
   editBgMusicFile.value = undefined
   editBgVideoFile.value = undefined
   editFgVideoFile.value = undefined
@@ -90,6 +92,7 @@ async function saveEdit() {
     description: editDescription.value,
     isIdle: editIsIdle.value,
     loop: editLoop.value,
+    isSpeakingAction: editIsSpeakingAction.value,
   }
   if (editBgMusicFile.value !== undefined)
     patch.bgMusicFile = editBgMusicFile.value
@@ -310,15 +313,16 @@ function formatDuration(ms?: number) {
             <div class="flex shrink-0 items-center gap-1">
               <button
                 :class="[
-                  'p-1.5 rounded-lg transition-colors',
+                  'flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors',
                   action.isSpeakingAction
-                    ? 'text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                    ? 'text-rose-500 bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/20 dark:hover:bg-rose-900/30'
                     : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
                 ]"
                 :title="action.isSpeakingAction ? t('settings.pages.actions.tooltips.remove-speaking') : t('settings.pages.actions.tooltips.add-speaking')"
                 @click="toggleSpeakingAction(action)"
               >
-                <div :class="[action.isSpeakingAction ? 'i-solar:microphone-bold' : 'i-solar:microphone-slash-bold']" />
+                <div :class="[action.isSpeakingAction ? 'i-solar:microphone-bold' : 'i-solar:microphone-slash-bold', 'text-sm']" />
+                <span>{{ t('settings.pages.actions.tooltips.speaking-label') }}</span>
               </button>
               <button
                 :class="[
@@ -386,6 +390,15 @@ function formatDuration(ms?: number) {
                 >
                 <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.loop') }}</span>
                 <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.loop-hint') }}</span>
+              </label>
+              <label class="flex cursor-pointer select-none items-center gap-2">
+                <input
+                  v-model="editIsSpeakingAction"
+                  type="checkbox"
+                  class="rounded accent-rose-500"
+                >
+                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.speaking-action') }}</span>
+                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.speaking-hint') }}</span>
               </label>
             </div>
 
