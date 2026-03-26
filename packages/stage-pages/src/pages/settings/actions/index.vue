@@ -39,9 +39,9 @@ function startEdit(action: ActionEntry) {
   editBgVideoFile.value = undefined
   editFgVideoFile.value = undefined
   // Show existing file labels
-  editBgMusicName.value = action.bgMusicUrl ? '(existing file)' : ''
-  editBgVideoName.value = action.bgVideoUrl ? '(existing file)' : ''
-  editFgVideoName.value = action.fgVideoUrl ? '(existing file)' : ''
+  editBgMusicName.value = action.bgMusicUrl ? t('settings.pages.actions.media.existing-file') : ''
+  editBgVideoName.value = action.bgVideoUrl ? t('settings.pages.actions.media.existing-file') : ''
+  editFgVideoName.value = action.fgVideoUrl ? t('settings.pages.actions.media.existing-file') : ''
 }
 
 // file dialogs for edit form media uploads
@@ -150,7 +150,7 @@ const mediaFields = [
     key: 'bgMusic' as const,
     icon: 'i-solar:music-note-bold',
     iconColor: 'text-purple-500',
-    label: 'Background Music',
+    label: t('settings.pages.actions.media.bg-music'),
     dialog: bgMusicDialog,
     name: editBgMusicName,
     clear: clearBgMusic,
@@ -159,7 +159,7 @@ const mediaFields = [
     key: 'bgVideo' as const,
     icon: 'i-solar:videocamera-record-bold',
     iconColor: 'text-orange-500',
-    label: 'Background Video (behind model)',
+    label: t('settings.pages.actions.media.bg-video'),
     dialog: bgVideoDialog,
     name: editBgVideoName,
     clear: clearBgVideo,
@@ -168,7 +168,7 @@ const mediaFields = [
     key: 'fgVideo' as const,
     icon: 'i-solar:videocamera-add-bold',
     iconColor: 'text-blue-500',
-    label: 'Foreground Video (in front of model)',
+    label: t('settings.pages.actions.media.fg-video'),
     dialog: fgVideoDialog,
     name: editFgVideoName,
     clear: clearFgVideo,
@@ -197,7 +197,7 @@ function formatDuration(ms?: number) {
       <Button
         size="sm"
         icon="i-solar:add-circle-bold"
-        label="Import .vrma"
+        :label="t('settings.pages.actions.import-vrma')"
         @click="vrmaDialog.open()"
       />
     </div>
@@ -208,13 +208,13 @@ function formatDuration(ms?: number) {
       class="border border-primary-300/40 rounded-2xl bg-primary-50/50 p-4 space-y-3 dark:border-primary-700/40 dark:bg-primary-900/10"
     >
       <div class="text-sm font-600">
-        Import: {{ pendingFile?.name }}
+        {{ t('settings.pages.actions.import-title', { filename: pendingFile?.name }) }}
       </div>
-      <FieldInput v-model="importName" label="Name" placeholder="Action name" />
-      <FieldInput v-model="importDescription" label="Description" placeholder="Describe what this action does" />
+      <FieldInput v-model="importName" :label="t('settings.pages.actions.form.name')" :placeholder="t('settings.pages.actions.form.name-placeholder')" />
+      <FieldInput v-model="importDescription" :label="t('settings.pages.actions.form.description')" :placeholder="t('settings.pages.actions.form.description-placeholder')" />
       <div class="flex gap-2">
-        <Button size="sm" variant="primary" label="Import" @click="confirmImport" />
-        <Button size="sm" label="Cancel" @click="cancelImport" />
+        <Button size="sm" variant="primary" :label="t('settings.pages.actions.import-btn')" @click="confirmImport" />
+        <Button size="sm" :label="t('settings.pages.actions.cancel')" @click="cancelImport" />
       </div>
     </div>
 
@@ -255,7 +255,7 @@ function formatDuration(ms?: number) {
                       : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300',
                   ]"
                 >
-                  {{ action.isBuiltin ? 'Built-in' : 'Custom' }}
+                  {{ action.isBuiltin ? t('settings.pages.actions.badges.builtin') : t('settings.pages.actions.badges.custom') }}
                 </span>
                 <span
                   v-if="action.durationMs"
@@ -267,27 +267,27 @@ function formatDuration(ms?: number) {
                   v-if="action.isIdle"
                   class="inline-flex items-center rounded-full bg-teal-100 px-2 py-0.5 text-xs text-teal-700 dark:bg-teal-900/50 dark:text-teal-300"
                 >
-                  Idle
+                  {{ t('settings.pages.actions.badges.idle') }}
                 </span>
                 <span
                   v-if="action.loop && !action.isIdle"
                   class="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
                 >
-                  Loop
+                  {{ t('settings.pages.actions.badges.loop') }}
                 </span>
                 <span
                   v-if="action.bgMusicUrl"
                   class="inline-flex items-center gap-0.5 rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
                 >
                   <div class="i-solar:music-note-bold text-xs" />
-                  Music
+                  {{ t('settings.pages.actions.badges.music') }}
                 </span>
                 <span
                   v-if="action.bgVideoUrl || action.fgVideoUrl"
                   class="inline-flex items-center gap-0.5 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700 dark:bg-orange-900/50 dark:text-orange-300"
                 >
                   <div class="i-solar:videocamera-record-bold text-xs" />
-                  Video
+                  {{ t('settings.pages.actions.badges.video') }}
                 </span>
               </div>
               <div class="line-clamp-1 mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -304,21 +304,21 @@ function formatDuration(ms?: number) {
                     ? 'text-primary-500 hover:bg-primary-100 dark:hover:bg-primary-900/30'
                     : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
                 ]"
-                :title="action.enabled ? 'Disable' : 'Enable'"
+                :title="action.enabled ? t('settings.pages.actions.tooltips.disable') : t('settings.pages.actions.tooltips.enable')"
                 @click="toggleEnabled(action)"
               >
                 <div :class="[action.enabled ? 'i-solar:check-circle-bold' : 'i-solar:close-circle-bold']" />
               </button>
               <button
                 class="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800"
-                title="Edit"
+                :title="t('settings.pages.actions.tooltips.edit')"
                 @click="startEdit(action)"
               >
                 <div class="i-solar:pen-2-bold" />
               </button>
               <button
                 class="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-primary-50 hover:text-primary-500 dark:hover:bg-primary-900/20"
-                title="Preview in VRMA Player"
+                :title="t('settings.pages.actions.tooltips.preview')"
                 @click="previewAction(action)"
               >
                 <div class="i-solar:eye-bold" />
@@ -326,7 +326,7 @@ function formatDuration(ms?: number) {
               <button
                 v-if="!action.isBuiltin"
                 class="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
-                title="Delete"
+                :title="t('settings.pages.actions.tooltips.delete')"
                 @click="store.removeCustomAction(action.id)"
               >
                 <div class="i-solar:trash-bin-trash-bold" />
@@ -339,10 +339,10 @@ function formatDuration(ms?: number) {
         <template v-else>
           <div class="space-y-3">
             <div class="text-sm text-neutral-700 font-600 dark:text-neutral-300">
-              Editing: {{ action.name }}
+              {{ t('settings.pages.actions.edit.title', { name: action.name }) }}
             </div>
-            <FieldInput v-model="editName" label="Name" placeholder="Action name" />
-            <FieldInput v-model="editDescription" label="Description" placeholder="Describe what this action does" />
+            <FieldInput v-model="editName" :label="t('settings.pages.actions.form.name')" :placeholder="t('settings.pages.actions.form.name-placeholder')" />
+            <FieldInput v-model="editDescription" :label="t('settings.pages.actions.form.description')" :placeholder="t('settings.pages.actions.form.description-placeholder')" />
 
             <!-- Playback behavior toggles -->
             <div class="flex flex-wrap gap-4">
@@ -352,8 +352,8 @@ function formatDuration(ms?: number) {
                   type="checkbox"
                   class="rounded accent-primary-500"
                 >
-                <span class="text-sm text-neutral-700 dark:text-neutral-300">Idle action</span>
-                <span class="text-xs text-neutral-400">(randomly rotated while idle)</span>
+                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.idle-action') }}</span>
+                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.idle-hint') }}</span>
               </label>
               <label class="flex cursor-pointer select-none items-center gap-2">
                 <input
@@ -361,15 +361,15 @@ function formatDuration(ms?: number) {
                   type="checkbox"
                   class="rounded accent-primary-500"
                 >
-                <span class="text-sm text-neutral-700 dark:text-neutral-300">Loop</span>
-                <span class="text-xs text-neutral-400">(loops until stopped; if off, returns to idle after finishing)</span>
+                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.loop') }}</span>
+                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.loop-hint') }}</span>
               </label>
             </div>
 
             <!-- Background Media section -->
             <div class="border border-neutral-200 rounded-xl p-3 space-y-2 dark:border-neutral-700">
               <div class="text-xs text-neutral-500 font-600 tracking-wide uppercase dark:text-neutral-400">
-                Background Media
+                {{ t('settings.pages.actions.media.title') }}
               </div>
 
               <div
@@ -384,13 +384,13 @@ function formatDuration(ms?: number) {
                   </div>
                   <div class="flex items-center gap-2">
                     <span :class="['text-xs truncate flex-1', field.name.value ? 'text-neutral-700 dark:text-neutral-300' : 'text-neutral-400']">
-                      {{ field.name.value || 'No file selected' }}
+                      {{ field.name.value || t('settings.pages.actions.media.no-file') }}
                     </span>
                     <button
                       class="shrink-0 rounded-lg bg-neutral-100 px-2 py-1 text-xs text-neutral-600 transition-colors dark:bg-neutral-800 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
                       @click="field.dialog.open()"
                     >
-                      {{ field.name.value ? 'Change' : 'Upload' }}
+                      {{ field.name.value ? t('settings.pages.actions.media.change') : t('settings.pages.actions.media.upload') }}
                     </button>
                     <button
                       v-if="field.name.value"
@@ -406,8 +406,8 @@ function formatDuration(ms?: number) {
             </div>
 
             <div class="flex gap-2">
-              <Button size="sm" variant="primary" label="Save" @click="saveEdit" />
-              <Button size="sm" label="Cancel" @click="cancelEdit" />
+              <Button size="sm" variant="primary" :label="t('settings.pages.actions.save')" @click="saveEdit" />
+              <Button size="sm" :label="t('settings.pages.actions.cancel')" @click="cancelEdit" />
             </div>
           </div>
         </template>

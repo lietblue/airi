@@ -813,6 +813,44 @@ pages:
   actions:
     description: 配置 AIRI 的动作库及每个动作的媒体
     title: 动作
+    import-vrma: 导入 .vrma
+    import-title: 导入：{filename}
+    form:
+      name: 名称
+      name-placeholder: 动作名称
+      description: 描述
+      description-placeholder: 描述此动作的用途
+    import-btn: 导入
+    cancel: 取消
+    save: 保存
+    badges:
+      builtin: 内置
+      custom: 自定义
+      idle: 待机
+      loop: 循环
+      music: 音乐
+      video: 视频
+    edit:
+      title: 编辑：{name}
+      idle-action: 待机动作
+      idle-hint: （在待机时随机轮换）
+      loop: 循环
+      loop-hint: （循环播放直到停止；关闭则播完后返回待机）
+    media:
+      title: 背景媒体
+      bg-music: 背景音乐
+      bg-video: 背景视频（模型后方）
+      fg-video: 前景视频（模型前方）
+      no-file: 未选择文件
+      change: 更换
+      upload: 上传
+      existing-file: （已有文件）
+    tooltips:
+      disable: 禁用
+      enable: 启用
+      edit: 编辑
+      preview: 在 VRMA 播放器中预览
+      delete: 删除
   scene:
     description: 配置角色所在环境
     title: 场景

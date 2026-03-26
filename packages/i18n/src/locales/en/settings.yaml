@@ -857,6 +857,44 @@ pages:
   actions:
     description: Configure AIRI's motion library and per-action media
     title: Actions
+    import-vrma: Import .vrma
+    import-title: 'Import: {filename}'
+    form:
+      name: Name
+      name-placeholder: Action name
+      description: Description
+      description-placeholder: Describe what this action does
+    import-btn: Import
+    cancel: Cancel
+    save: Save
+    badges:
+      builtin: Built-in
+      custom: Custom
+      idle: Idle
+      loop: Loop
+      music: Music
+      video: Video
+    edit:
+      title: 'Editing: {name}'
+      idle-action: Idle action
+      idle-hint: (randomly rotated while idle)
+      loop: Loop
+      loop-hint: (loops until stopped; if off, returns to idle after finishing)
+    media:
+      title: Background Media
+      bg-music: Background Music
+      bg-video: Background Video (behind model)
+      fg-video: Foreground Video (in front of model)
+      no-file: No file selected
+      change: Change
+      upload: Upload
+      existing-file: (existing file)
+    tooltips:
+      disable: Disable
+      enable: Enable
+      edit: Edit
+      preview: Preview in VRMA Player
+      delete: Delete
   scene:
     description: Configure the environment where the character lives
     title: Scene
