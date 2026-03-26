@@ -572,7 +572,6 @@ const IDLE_ROTATION_INTERVAL_MS = 45_000
 let idleRotationTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
-  animationActionsStore.loadCustomActionsFromIndexedDB()
   idleRotationTimer = setInterval(() => {
     if (animationActionsStore.currentAction?.isIdle)
       animationActionsStore.stopAction() // source is set to 'idle-rotation' inside stopAction

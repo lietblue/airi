@@ -397,6 +397,9 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
 
     if (!existing.isBuiltin) {
       const stored = await localforage.getItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`)
+      // NOTICE: If the stored record is missing (e.g. IndexedDB was cleared externally),
+      // we can't reconstruct the File object from memory — blob URLs are transient and the
+      // original File is gone after reload. Skip the write rather than saving a broken record.
       if (stored) {
         await localforage.setItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`, {
           ...stored,
@@ -413,7 +416,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           bgMusicUrl: 'bgMusicFile' in patch ? undefined : stored.bgMusicUrl,
           bgVideoUrl: 'bgVideoFile' in patch ? undefined : stored.bgVideoUrl,
           fgVideoUrl: 'fgVideoFile' in patch ? undefined : stored.fgVideoUrl,
-        })
+        }).catch(err => console.error('[animation-actions] failed to update custom action in IndexedDB:', err))
       }
     }
   }
@@ -438,6 +441,11 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     currentActionId.value = pickRandomIdle()
     currentActionSource.value = 'idle-rotation'
   }
+
+  // Auto-initialize: load persisted actions when the store is first created so
+  // any component (settings page, devtools, etc.) sees the full action list without
+  // needing an explicit call. The loading mutex prevents duplicate concurrent loads.
+  loadCustomActionsFromIndexedDB()
 
   return {
     actions,
