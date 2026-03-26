@@ -46,7 +46,10 @@ const LOCALFORAGE_KEY_PREFIX = 'animation-action-'
 
 // NOTICE: Builtin action field overrides (enabled, isSpeakingAction, etc.) are stored
 // separately because builtins have no StoredCustomAction record in IndexedDB.
-const BUILTIN_OVERRIDES_KEY = 'animation-action-builtin-overrides'
+// NOTICE: This key must NOT start with LOCALFORAGE_KEY_PREFIX ('animation-action-') or
+// localforage.iterate will pick it up and try to parse it as a StoredCustomAction, causing
+// URL.createObjectURL(undefined) to throw and silently breaking the entire load.
+const BUILTIN_OVERRIDES_KEY = 'airi-builtin-action-overrides'
 
 type BuiltinOverrides = Record<string, {
   enabled?: boolean
