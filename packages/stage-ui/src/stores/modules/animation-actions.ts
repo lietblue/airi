@@ -53,6 +53,16 @@ const BUILTIN_OVERRIDES_KEY = 'airi-builtin-action-overrides'
 // NOTICE: Legacy key that was accidentally prefixed with LOCALFORAGE_KEY_PREFIX.
 // Kept for one-time migration only; data is moved to BUILTIN_OVERRIDES_KEY then deleted.
 const BUILTIN_OVERRIDES_KEY_LEGACY = 'animation-action-builtin-overrides'
+// Global speaking behavior settings (not per-action).
+const SPEAKING_SETTINGS_KEY = 'airi-speaking-settings'
+
+interface SpeakingSettings {
+  /**
+   * When true, the thinking phase (before first token) also picks from the
+   * speaking actions pool instead of always playing the built-in 'thinking' action.
+   */
+  thinkingUseSpeakingActions: boolean
+}
 
 type BuiltinOverrides = Record<string, {
   enabled?: boolean
@@ -152,6 +162,15 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
   const currentActionSource = ref<ActionSource>('idle-rotation')
   const loading = ref(false)
 
+  /** When true, the thinking phase picks from speaking actions instead of hardcoding 'thinking'. */
+  const thinkingUseSpeakingActions = ref(false)
+
+  async function saveSpeakingSettings() {
+    await localforage.setItem<SpeakingSettings>(SPEAKING_SETTINGS_KEY, {
+      thinkingUseSpeakingActions: thinkingUseSpeakingActions.value,
+    }).catch(err => console.error('[animation-actions] failed to save speaking settings:', err))
+  }
+
   const currentAction = computed(() =>
     actions.value.find(a => a.id === currentActionId.value),
   )
@@ -203,6 +222,10 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, { ...legacyOverrides, ...existing })
         await localforage.removeItem(BUILTIN_OVERRIDES_KEY_LEGACY)
       }
+
+      const speakingSettings = await localforage.getItem<SpeakingSettings>(SPEAKING_SETTINGS_KEY)
+      if (speakingSettings)
+        thinkingUseSpeakingActions.value = speakingSettings.thinkingUseSpeakingActions
 
       const builtinOverrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
       const customEntries: ActionEntry[] = []
@@ -457,6 +480,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     currentBgVideoUrl,
     currentFgVideoUrl,
     loading,
+    thinkingUseSpeakingActions,
 
     loadCustomActionsFromIndexedDB,
     addCustomAction,
@@ -466,5 +490,6 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     stopAction,
     pickRandomIdle,
     pickRandomSpeakingAction,
+    saveSpeakingSettings,
   }
 })

@@ -69,7 +69,7 @@ const {
 } = storeToRefs(settingsStore)
 const { mouthOpenSize } = storeToRefs(useSpeakingStore())
 const animationActionsStore = useAnimationActionsStore()
-const { currentActionUrl, currentAction, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl } = storeToRefs(animationActionsStore)
+const { currentActionUrl, currentAction, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions } = storeToRefs(animationActionsStore)
 const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
 
@@ -499,9 +499,12 @@ function handleAnimationComplete() {
 
 chatHookCleanups.push(onBeforeSend(async () => {
   currentMotion.value = { group: EmotionThinkMotionName }
-  // Play the "thinking" pose while waiting for the first token
-  if (stageModelRenderer.value === 'vrm')
-    animationActionsStore.playAction('thinking', 'speaking-cycle')
+  if (stageModelRenderer.value === 'vrm') {
+    if (thinkingUseSpeakingActions.value)
+      playNextSpeakingAction()
+    else
+      animationActionsStore.playAction('thinking', 'speaking-cycle')
+  }
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal) => {

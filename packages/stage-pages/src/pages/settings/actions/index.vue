@@ -12,7 +12,12 @@ import { useRouter } from 'vue-router'
 const { t } = useI18n()
 const router = useRouter()
 const store = useAnimationActionsStore()
-const { actions, currentActionId } = storeToRefs(store)
+const { actions, currentActionId, thinkingUseSpeakingActions } = storeToRefs(store)
+
+function toggleThinkingMode() {
+  thinkingUseSpeakingActions.value = !thinkingUseSpeakingActions.value
+  store.saveSpeakingSettings()
+}
 
 // ---- Edit state ----
 const editingId = ref<string | null>(null)
@@ -207,6 +212,29 @@ function formatDuration(ms?: number) {
         :label="t('settings.pages.actions.import-vrma')"
         @click="vrmaDialog.open()"
       />
+    </div>
+
+    <!-- Global speaking behavior -->
+    <div class="border border-neutral-200 rounded-2xl p-4 space-y-2 dark:border-neutral-700">
+      <div class="text-xs text-neutral-500 font-600 tracking-wide uppercase dark:text-neutral-400">
+        {{ t('settings.pages.actions.speaking-behavior.title') }}
+      </div>
+      <label class="flex cursor-pointer select-none items-center gap-3">
+        <input
+          :checked="thinkingUseSpeakingActions"
+          type="checkbox"
+          class="rounded accent-rose-500"
+          @change="toggleThinkingMode"
+        >
+        <div>
+          <div class="text-sm text-neutral-700 dark:text-neutral-300">
+            {{ t('settings.pages.actions.speaking-behavior.thinking-use-speaking-actions') }}
+          </div>
+          <div class="text-xs text-neutral-400">
+            {{ t('settings.pages.actions.speaking-behavior.thinking-use-speaking-actions-hint') }}
+          </div>
+        </div>
+      </label>
     </div>
 
     <!-- Import form -->

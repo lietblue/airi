@@ -892,6 +892,12 @@ pages:
       change: Change
       upload: Upload
       existing-file: (existing file)
+    speaking-behavior:
+      title: Speaking Behavior
+      thinking-use-speaking-actions: Use speaking actions while thinking
+      thinking-use-speaking-actions-hint: >-
+        When on, the thinking phase (before first token) picks from your speaking
+        actions instead of always playing the built-in Thinking pose.
     tooltips:
       disable: Disable
       enable: Enable
