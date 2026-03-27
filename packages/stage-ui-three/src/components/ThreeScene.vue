@@ -491,11 +491,17 @@ const effectProps = {
   blendFunction: BlendFunction.SRC,
 }
 
+// Local component-level hook (used by devtools/pages that have a sceneRef).
+// modelStore.vrmFrameHook (global) takes precedence when set.
 const vrmFrameHook = shallowRef<((vrm: VRM, delta: number) => void) | undefined>(undefined)
+const { vrmFrameHook: storeVrmFrameHook } = storeToRefs(modelStore)
 function applyVrmFrameHook() {
-  modelRef.value?.setVrmFrameHook(vrmFrameHook.value)
+  // Prefer the store-level hook (set by headless feature components)
+  modelRef.value?.setVrmFrameHook(storeVrmFrameHook.value ?? vrmFrameHook.value)
 }
 watch(modelRef, () => applyVrmFrameHook(), { immediate: true })
+watch(storeVrmFrameHook, () => applyVrmFrameHook())
+watch(vrmFrameHook, () => applyVrmFrameHook())
 
 watch(() => props.modelSrc, (modelSrc) => {
   modelPhase.value = modelSrc ? 'loading' : 'no-model'

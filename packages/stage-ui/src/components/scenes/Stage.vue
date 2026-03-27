@@ -69,7 +69,7 @@ const {
 } = storeToRefs(settingsStore)
 const { mouthOpenSize } = storeToRefs(useSpeakingStore())
 const animationActionsStore = useAnimationActionsStore()
-const { currentActionUrl, currentAction, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions } = storeToRefs(animationActionsStore)
+const { currentActionUrl, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions, isCurrentActionLoop, isCurrentActionIdle } = storeToRefs(animationActionsStore)
 const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
 
@@ -576,7 +576,7 @@ let idleRotationTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   idleRotationTimer = setInterval(() => {
-    if (animationActionsStore.currentAction?.isIdle)
+    if (isCurrentActionIdle.value)
       animationActionsStore.stopAction() // source is set to 'idle-rotation' inside stopAction
   }, IDLE_ROTATION_INTERVAL_MS)
   db.value = drizzle({ connection: { bundles: getImportUrlBundles() } })
@@ -667,7 +667,7 @@ defineExpose({
           class="relative z-1 h-full w-full"
           :model-src="stageModelSelectedUrl"
           :idle-animation="currentActionUrl"
-          :loop="currentAction?.loop ?? true"
+          :loop="isCurrentActionLoop"
           :paused="paused"
           :show-axes="stageViewControlsEnabled"
           :current-audio-source="currentAudioSource"

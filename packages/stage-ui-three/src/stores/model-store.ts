@@ -1,10 +1,14 @@
+import type { VRM } from '@pixiv/three-vrm'
 import type { Vector3 } from 'three'
 
 import { useBroadcastChannel, useLocalStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 import defaultSkyBoxSrc from '../components/Environment/assets/sky_linekotsi_23_HDRI.hdr?url'
+
+/** Per-frame VRM hook type, mirrors VRMModel.vue's local definition. */
+export type VrmFrameHook = (vrm: VRM, delta: number) => void
 
 // TODO: this is for future type injection features
 // TODO: make a separate type.ts
@@ -156,6 +160,14 @@ export const useModelStore = defineStore('modelStore', () => {
   const cameraDistance = useLocalStorage('settings/stage-ui-three/cameraDistance', 0)
   const lookAtTarget = useLocalStorage('settings/stage-ui-three/lookAtTarget', { x: 0, y: 0, z: 0 })
 
+  /**
+   * Global VRM per-frame hook. Set by headless feature components (e.g. HandGazeFeature)
+   * that need to drive VRM bone transforms without holding a ThreeScene ref.
+   * ThreeScene watches this and forwards it to VRMModel.setVrmFrameHook().
+   * Only one global hook is supported; feature components must clear it on unmount.
+   */
+  const vrmFrameHook = shallowRef<VrmFrameHook | undefined>(undefined)
+
   function resetModelStore() {
     scenePhase.value = 'pending'
     sceneTransactionDepth.value = 0
@@ -242,6 +254,7 @@ export const useModelStore = defineStore('modelStore', () => {
     lookAtTarget,
     trackingMode,
     eyeHeight,
+    vrmFrameHook,
     renderScale,
     multisampling,
 

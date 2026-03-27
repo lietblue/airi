@@ -12,7 +12,7 @@ import { useRouter } from 'vue-router'
 const { t } = useI18n()
 const router = useRouter()
 const store = useAnimationActionsStore()
-const { actions, currentActionId, thinkingUseSpeakingActions } = storeToRefs(store)
+const { actions, currentActionId, thinkingUseSpeakingActions, allTags, idlePoolTag, speakingPoolTag, loopTag } = storeToRefs(store)
 
 function toggleThinkingMode() {
   thinkingUseSpeakingActions.value = !thinkingUseSpeakingActions.value
@@ -23,10 +23,9 @@ function toggleThinkingMode() {
 const editingId = ref<string | null>(null)
 const editName = ref('')
 const editDescription = ref('')
+const editTags = ref<string[]>([])
+const newTagInput = ref('')
 // pending files for the current edit session (null = clear, undefined = unchanged)
-const editIsIdle = ref(false)
-const editLoop = ref(false)
-const editIsSpeakingAction = ref(false)
 const editBgMusicFile = ref<File | null | undefined>(undefined)
 const editBgVideoFile = ref<File | null | undefined>(undefined)
 const editFgVideoFile = ref<File | null | undefined>(undefined)
@@ -39,9 +38,7 @@ function startEdit(action: ActionEntry) {
   editingId.value = action.id
   editName.value = action.name
   editDescription.value = action.description
-  editIsIdle.value = action.isIdle
-  editLoop.value = action.loop
-  editIsSpeakingAction.value = action.isSpeakingAction
+  editTags.value = [...(action.tags ?? [])]
   editBgMusicFile.value = undefined
   editBgVideoFile.value = undefined
   editFgVideoFile.value = undefined
@@ -89,15 +86,25 @@ function clearFgVideo() {
   editFgVideoName.value = ''
 }
 
+function addEditTag() {
+  const tag = newTagInput.value.trim()
+  if (!tag || editTags.value.includes(tag))
+    return
+  editTags.value = [...editTags.value, tag]
+  newTagInput.value = ''
+}
+
+function removeEditTag(tag: string) {
+  editTags.value = editTags.value.filter(t => t !== tag)
+}
+
 async function saveEdit() {
   if (!editingId.value)
     return
   const patch: Parameters<typeof store.updateAction>[1] = {
     name: editName.value,
     description: editDescription.value,
-    isIdle: editIsIdle.value,
-    loop: editLoop.value,
-    isSpeakingAction: editIsSpeakingAction.value,
+    tags: editTags.value,
   }
   if (editBgMusicFile.value !== undefined)
     patch.bgMusicFile = editBgMusicFile.value
@@ -115,10 +122,6 @@ function cancelEdit() {
 
 async function toggleEnabled(action: ActionEntry) {
   await store.updateAction(action.id, { enabled: !action.enabled })
-}
-
-async function toggleSpeakingAction(action: ActionEntry) {
-  await store.updateAction(action.id, { isSpeakingAction: !action.isSpeakingAction })
 }
 
 // ---- Import .vrma ----
@@ -214,6 +217,38 @@ function formatDuration(ms?: number) {
       />
     </div>
 
+    <!-- Tag Groups -->
+    <div :class="['border', 'border-neutral-200', 'rounded-2xl', 'p-4', 'space-y-4', 'dark:border-neutral-700']">
+      <div :class="['text-xs', 'text-neutral-500', 'font-600', 'tracking-wide', 'uppercase', 'dark:text-neutral-400']">
+        {{ t('settings.pages.actions.tag-groups.title') }}
+      </div>
+      <div
+        v-for="group in [
+          { key: 'idle', model: idlePoolTag, label: t('settings.pages.actions.tag-groups.idle-tag'), desc: t('settings.pages.actions.tag-groups.idle-tag-description') },
+          { key: 'speaking', model: speakingPoolTag, label: t('settings.pages.actions.tag-groups.speaking-tag'), desc: t('settings.pages.actions.tag-groups.speaking-tag-description') },
+          { key: 'loop', model: loopTag, label: t('settings.pages.actions.tag-groups.loop-tag'), desc: t('settings.pages.actions.tag-groups.loop-tag-description') },
+        ]"
+        :key="group.key"
+        :class="['flex', 'flex-col', 'gap-1']"
+      >
+        <label :class="['text-sm', 'text-neutral-700', 'dark:text-neutral-300']">
+          {{ group.label }}
+        </label>
+        <div :class="['text-xs', 'text-neutral-400']">
+          {{ group.desc }}
+        </div>
+        <input
+          v-model="group.model"
+          list="all-tags-list-groups"
+          type="text"
+          :class="['mt-1', 'rounded', 'border', 'border-neutral-300', 'bg-white', 'px-3', 'py-1.5', 'text-sm', 'dark:border-neutral-700', 'dark:bg-neutral-900']"
+        >
+      </div>
+      <datalist id="all-tags-list-groups">
+        <option v-for="tag in allTags" :key="tag" :value="tag" />
+      </datalist>
+    </div>
+
     <!-- Global speaking behavior -->
     <div class="border border-neutral-200 rounded-2xl p-4 space-y-2 dark:border-neutral-700">
       <div class="text-xs text-neutral-500 font-600 tracking-wide uppercase dark:text-neutral-400">
@@ -299,18 +334,6 @@ function formatDuration(ms?: number) {
                   {{ formatDuration(action.durationMs) }}
                 </span>
                 <span
-                  v-if="action.isIdle"
-                  class="inline-flex items-center rounded-full bg-teal-100 px-2 py-0.5 text-xs text-teal-700 dark:bg-teal-900/50 dark:text-teal-300"
-                >
-                  {{ t('settings.pages.actions.badges.idle') }}
-                </span>
-                <span
-                  v-if="action.loop && !action.isIdle"
-                  class="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
-                >
-                  {{ t('settings.pages.actions.badges.loop') }}
-                </span>
-                <span
                   v-if="action.bgMusicUrl"
                   class="inline-flex items-center gap-0.5 rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
                 >
@@ -324,12 +347,22 @@ function formatDuration(ms?: number) {
                   <div class="i-solar:videocamera-record-bold text-xs" />
                   {{ t('settings.pages.actions.badges.video') }}
                 </span>
+                <!-- All tags displayed as chips -->
                 <span
-                  v-if="action.isSpeakingAction"
-                  class="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700 dark:bg-rose-900/50 dark:text-rose-300"
+                  v-for="tag in action.tags"
+                  :key="tag"
+                  :class="[
+                    'inline-flex items-center rounded-full px-2 py-0.5 text-xs',
+                    tag === idlePoolTag
+                      ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300'
+                      : tag === speakingPoolTag
+                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300'
+                        : tag === loopTag
+                          ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'
+                          : 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300',
+                  ]"
                 >
-                  <div class="i-solar:microphone-bold text-xs" />
-                  {{ t('settings.pages.actions.badges.speaking') }}
+                  {{ tag }}
                 </span>
               </div>
               <div class="line-clamp-1 mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -342,19 +375,6 @@ function formatDuration(ms?: number) {
               <button
                 :class="[
                   'flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors',
-                  action.isSpeakingAction
-                    ? 'text-rose-500 bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/20 dark:hover:bg-rose-900/30'
-                    : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
-                ]"
-                :title="action.isSpeakingAction ? t('settings.pages.actions.tooltips.remove-speaking') : t('settings.pages.actions.tooltips.add-speaking')"
-                @click="toggleSpeakingAction(action)"
-              >
-                <div :class="[action.isSpeakingAction ? 'i-solar:microphone-bold' : 'i-solar:microphone-slash-bold', 'text-sm']" />
-                <span>{{ t('settings.pages.actions.tooltips.speaking-label') }}</span>
-              </button>
-              <button
-                :class="[
-                  'p-1.5 rounded-lg transition-colors',
                   action.enabled
                     ? 'text-primary-500 hover:bg-primary-100 dark:hover:bg-primary-900/30'
                     : 'text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800',
@@ -399,35 +419,50 @@ function formatDuration(ms?: number) {
             <FieldInput v-model="editName" :label="t('settings.pages.actions.form.name')" :placeholder="t('settings.pages.actions.form.name-placeholder')" />
             <FieldInput v-model="editDescription" :label="t('settings.pages.actions.form.description')" :placeholder="t('settings.pages.actions.form.description-placeholder')" />
 
-            <!-- Playback behavior toggles -->
-            <div class="flex flex-wrap gap-4">
-              <label class="flex cursor-pointer select-none items-center gap-2">
-                <input
-                  v-model="editIsIdle"
-                  type="checkbox"
-                  class="rounded accent-primary-500"
+            <!-- Tags -->
+            <div :class="['border', 'border-neutral-200', 'rounded-xl', 'p-3', 'space-y-2', 'dark:border-neutral-700']">
+              <div :class="['text-xs', 'text-neutral-500', 'font-600', 'tracking-wide', 'uppercase', 'dark:text-neutral-400']">
+                {{ t('settings.pages.actions.edit.tags') }}
+              </div>
+              <div :class="['flex', 'flex-wrap', 'gap-1', 'min-h-6']">
+                <span
+                  v-for="tag in editTags"
+                  :key="tag"
+                  :class="['inline-flex', 'items-center', 'gap-1', 'rounded-full', 'bg-violet-100', 'px-2', 'py-0.5', 'text-xs', 'text-violet-700', 'dark:bg-violet-900/50', 'dark:text-violet-300']"
                 >
-                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.idle-action') }}</span>
-                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.idle-hint') }}</span>
-              </label>
-              <label class="flex cursor-pointer select-none items-center gap-2">
+                  {{ tag }}
+                  <button
+                    type="button"
+                    :class="['leading-none', 'hover:text-red-500', 'transition-colors']"
+                    @click="removeEditTag(tag)"
+                  >
+                    ×
+                  </button>
+                </span>
+                <span v-if="!editTags.length" :class="['text-xs', 'text-neutral-400', 'italic']">
+                  {{ t('settings.pages.actions.edit.tags-empty') }}
+                </span>
+              </div>
+              <div :class="['flex', 'gap-2']">
                 <input
-                  v-model="editLoop"
-                  type="checkbox"
-                  class="rounded accent-primary-500"
+                  v-model="newTagInput"
+                  list="all-tags-list"
+                  type="text"
+                  :placeholder="t('settings.pages.actions.edit.tags-placeholder')"
+                  :class="['flex-1', 'rounded', 'border', 'border-neutral-300', 'bg-white', 'px-2', 'py-1', 'text-xs', 'dark:border-neutral-700', 'dark:bg-neutral-900']"
+                  @keydown.enter.prevent="addEditTag"
                 >
-                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.loop') }}</span>
-                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.loop-hint') }}</span>
-              </label>
-              <label class="flex cursor-pointer select-none items-center gap-2">
-                <input
-                  v-model="editIsSpeakingAction"
-                  type="checkbox"
-                  class="rounded accent-rose-500"
+                <datalist id="all-tags-list">
+                  <option v-for="tag in allTags" :key="tag" :value="tag" />
+                </datalist>
+                <button
+                  type="button"
+                  :class="['rounded', 'bg-neutral-100', 'px-2', 'py-1', 'text-xs', 'text-neutral-600', 'transition-colors', 'dark:bg-neutral-800', 'dark:text-neutral-400', 'hover:bg-neutral-200', 'dark:hover:bg-neutral-700']"
+                  @click="addEditTag"
                 >
-                <span class="text-sm text-neutral-700 dark:text-neutral-300">{{ t('settings.pages.actions.edit.speaking-action') }}</span>
-                <span class="text-xs text-neutral-400">{{ t('settings.pages.actions.edit.speaking-hint') }}</span>
-              </label>
+                  {{ t('settings.pages.actions.edit.tags-add') }}
+                </button>
+              </div>
             </div>
 
             <!-- Background Media section -->

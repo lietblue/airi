@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { OnboardingDialog, OnboardingStepAnalyticsNotice, ToasterRoot } from '@proj-airi/stage-ui/components'
 import { isPosthogAvailableInBuild, useSharedAnalyticsStore } from '@proj-airi/stage-ui/stores/analytics'
-import { useCharacterOrchestratorStore } from '@proj-airi/stage-ui/stores/character'
+import { useCharacterOrchestratorStore, useCharacterStore } from '@proj-airi/stage-ui/stores/character'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useDisplayModelsStore } from '@proj-airi/stage-ui/stores/display-models'
 import { useModsServerChannelStore } from '@proj-airi/stage-ui/stores/mods/api/channel-server'
 import { useContextBridgeStore } from '@proj-airi/stage-ui/stores/mods/api/context-bridge'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
+import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
+import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-vision'
+import { usePresenceStore } from '@proj-airi/stage-ui/stores/modules/presence'
+import { useVisionProcessingStore } from '@proj-airi/stage-ui/stores/modules/vision'
 import { useOnboardingStore } from '@proj-airi/stage-ui/stores/onboarding'
 import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
 import { useTheme } from '@proj-airi/ui'
@@ -18,10 +22,56 @@ import { RouterView } from 'vue-router'
 import { toast, Toaster } from 'vue-sonner'
 
 import PerformanceOverlay from './components/Devtools/PerformanceOverlay.vue'
+import HandGazeFeature from './components/features/HandGazeFeature.vue'
+import PresenceDetector from './components/features/PresenceDetector.vue'
 
 import { usePWAStore } from './stores/pwa'
 
 usePWAStore()
+
+// --- Vision feature stores (persistent across all routes) ---
+const presenceStore = usePresenceStore()
+const handVisionStore = useHandVisionStore()
+const animationActionsStore = useAnimationActionsStore()
+const characterStore = useCharacterStore()
+const visionProcessingStore = useVisionProcessingStore()
+const { state: presenceState } = storeToRefs(presenceStore)
+
+// Speak a welcome message and play the configured welcome action when someone appears
+watch(() => presenceStore.pendingWelcome, async (msg) => {
+  if (!msg)
+    return
+  presenceStore.clearPendingWelcome()
+  if (presenceStore.welcomeActionTag) {
+    const id = animationActionsStore.pickRandomFromTag(presenceStore.welcomeActionTag)
+    if (id)
+      animationActionsStore.playAction(id, 'tool')
+  }
+  await characterStore.emitTextOutput(msg)
+})
+
+// Speak a hand-raised message and play the configured action when arm is raised
+watch(() => handVisionStore.pendingMessage, async (msg) => {
+  if (!msg)
+    return
+  handVisionStore.clearPendingMessage()
+  if (handVisionStore.messageActionTag) {
+    const id = animationActionsStore.pickRandomFromTag(handVisionStore.messageActionTag)
+    if (id)
+      animationActionsStore.playAction(id, 'tool')
+  }
+  await characterStore.emitTextOutput(msg)
+})
+
+// Gate LLM scene detection on presence active state
+watch(presenceState, (s) => {
+  if (!presenceStore.enabled)
+    return
+  if (s === 'active')
+    visionProcessingStore.startTicker(async () => {})
+  else
+    visionProcessingStore.stopTicker()
+})
 
 const contextBridgeStore = useContextBridgeStore()
 const i18n = useI18n()
@@ -112,6 +162,10 @@ function handleSetupSkipped() {
 </script>
 
 <template>
+  <!-- Vision feature components: headless, persist across all routes -->
+  <PresenceDetector v-if="presenceStore.enabled" />
+  <HandGazeFeature v-if="handVisionStore.gazeEnabled || handVisionStore.messageEnabled || handVisionStore.headTrackingEnabled" />
+
   <StageTransitionGroup
     :primary-color="primaryColor"
     :secondary-color="secondaryColor"

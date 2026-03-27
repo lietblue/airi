@@ -876,19 +876,22 @@ pages:
     badges:
       builtin: Built-in
       custom: Custom
-      idle: Idle
-      loop: Loop
       music: Music
       video: Video
-      speaking: Speaking
     edit:
       title: 'Editing: {name}'
-      idle-action: Idle action
-      idle-hint: (randomly rotated while idle)
-      loop: Loop
-      loop-hint: (loops until stopped; if off, returns to idle after finishing)
-      speaking-action: Speaking action
-      speaking-hint: (cycled through while AIRI is talking)
+      tags: Tags
+      tags-empty: No tags assigned
+      tags-placeholder: Add tag…
+      tags-add: Add
+    tag-groups:
+      title: Tag Groups
+      idle-tag: Idle Pool Tag
+      idle-tag-description: Actions tagged with this name are eligible for random idle rotation
+      speaking-tag: Speaking Pool Tag
+      speaking-tag-description: Actions tagged with this name are cycled while AIRI is talking
+      loop-tag: Loop Tag
+      loop-tag-description: Actions tagged with this name loop continuously; others play once then return to idle
     media:
       title: Background Media
       bg-music: Background Music
@@ -910,12 +913,70 @@ pages:
       edit: Edit
       preview: Preview in VRMA Player
       delete: Delete
-      add-speaking: Mark as speaking action
-      remove-speaking: Remove from speaking actions
-      speaking-label: Speaking
   scene:
     description: Configure the environment where the character lives
     title: Scene
+  vision:
+    description: Camera-based perception and interaction features
+    title: Vision
+    presence:
+      title: Presence Detection
+      description: Automatically switch between idle and active based on face detection
+      enable: Enable Presence Detection
+      enable-description: Use the camera to detect when someone is in front of AIRI
+      idle-timeout: Idle Timeout
+      idle-timeout-description: How long without a detected face before switching to idle (minutes)
+      welcome:
+        title: Welcome
+        enable: Enable Welcome
+        enable-description: Say a welcome message when someone appears
+        messages: Welcome Messages
+        messages-description: A random message is chosen each time someone is detected
+        messages-placeholder: Enter a welcome message
+        messages-add: Add Message
+        action-tag: Welcome Action Tag
+        action-tag-description: Play a random action from this tag pool alongside the welcome message
+        ai-regen: AI Regeneration
+        ai-regen-description: After using a welcome message, generate a new one using the LLM
+    hand:
+      title: Hand Gestures
+      gaze-amplitude: Gaze Amplitude
+      gaze-amplitude-description: How far AIRI's eyes move toward the edges of the frame (1.0 = default)
+      gaze-invert-x: Invert X
+      gaze-invert-x-description: Flip left/right tracking direction (applies to both gaze and head tracking)
+      gaze-invert-y: Invert Y
+      gaze-invert-y-description: Flip up/down tracking direction (applies to both gaze and head tracking; leave on if tracking appears reversed vertically)
+      head-tracking-enable: Head Tracking
+      head-tracking-enable-description: AIRI's head and neck turn toward the raised hand. Works independently — enable this without Gaze Tracking for head-only mode (neck 40%, head 60%)
+      head-tracking-strength: Head Strength
+      head-tracking-strength-description: How far the head turns toward the hand (0% = no movement, 100% = full range)
+      description: Control AIRI with raised-arm gestures
+      gaze-enable: Gaze Tracking
+      gaze-enable-description: AIRI looks at your raised hand
+      require-arm-raised: Require Arm Raised
+      require-arm-raised-description: Only activate when wrist is above elbow (prevents accidental triggers)
+      message-enable: Hand Message
+      message-enable-description: Say a message from the pool when an arm is raised
+      messages: Hand Raise Messages
+      messages-description: A random message is chosen each time an arm raise is detected
+      messages-placeholder: Enter a message
+      messages-add: Add Message
+      action-tag: Action Tag
+      action-tag-description: Play a random action from this tag pool when arm is raised
+      ai-regen: AI Regeneration
+      ai-regen-description: After using a message, generate a new one using the LLM
+    scene:
+      title: Scene Detection
+      description: Describe the surroundings using camera and vision LLM
+    debug:
+      title: Debugging
+      description: Live status for all vision detection features
+      presence-state: Presence State
+      face-count: Detected Faces
+      last-seen: Last Seen
+      hand-detected: Arm Raised
+      scene-last-capture: Last Scene Capture
+      scene-context-updates: Context Updates
   system:
     color-scheme:
       description: Change the color scheme of the stage.

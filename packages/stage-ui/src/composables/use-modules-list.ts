@@ -74,7 +74,9 @@ export function useModulesList() {
       name: t('settings.pages.modules.vision.title'),
       description: t('settings.pages.modules.vision.description'),
       icon: 'i-solar:eye-closed-bold-duotone',
-      to: '/settings/modules/vision',
+      // NOTICE: links to the vision hub page which covers presence, hand gestures, scene detection and debug;
+      // /settings/modules/vision (LLM scene analysis) is accessible from that hub under "Scene Detection".
+      to: '/settings/vision',
       configured: visionStore.configured,
       category: 'essential',
     },

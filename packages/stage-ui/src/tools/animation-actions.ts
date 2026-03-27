@@ -55,7 +55,7 @@ const tools = [
     execute: async () => {
       const store = useAnimationActionsStore()
       const action = store.currentAction
-      if (!action || action.isIdle)
+      if (!action || store.isCurrentActionIdle)
         return { state: 'idle', action: action ? { id: action.id, name: action.name } : null }
 
       return {
