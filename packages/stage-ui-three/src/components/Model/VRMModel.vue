@@ -353,6 +353,10 @@ function bindManagedVrmInstanceRenderLoop() {
   disposeBeforeRenderLoop?.()
 
   disposeBeforeRenderLoop = onBeforeRender(({ delta }) => {
+    // Manually update VRM components in the render loop because we manage the render loop on our own.
+    // See:
+    // 1. https://github.com/pixiv/three-vrm/blob/2c4aac612467216e0c8e7dc4500c2fa309208cc7/packages/three-vrm-core/src/VRMCore.ts#L72-L82
+    // 2. https://github.com/pixiv/three-vrm/blob/2c4aac612467216e0c8e7dc4500c2fa309208cc7/packages/three-vrm/src/VRM.ts#L49-L67
     const traceStart = isStageThreeRuntimeTraceEnabled() ? performance.now() : 0
     const tracingEnabled = traceStart > 0
 
@@ -391,6 +395,9 @@ function bindManagedVrmInstanceRenderLoop() {
     const expressionMs = measureFrameStep(tracingEnabled, () => {
       activeVrm?.expressionManager?.update()
     })
+    const nodeConstraintMs = measureFrameStep(tracingEnabled, () => {
+      activeVrm?.nodeConstraintManager?.update()
+    })
     const springBoneMs = measureFrameStep(tracingEnabled, () => {
       activeVrm?.springBoneManager?.update(delta)
     })
@@ -406,6 +413,7 @@ function bindManagedVrmInstanceRenderLoop() {
         humanoidMs,
         lipSyncMs,
         lookAtMs,
+        nodeConstraintMs,
         springBoneMs,
         ts: traceStart,
         vrmFrameHookMs,
@@ -757,8 +765,10 @@ async function loadModel() {
           }
           else if (mat?.isMToonMaterial) {
             // --- MToon material ---
-            // MToon is also shader-based and should receive the custom IBL injection.
-            configureInjectedShaderMaterial(mat)
+            // NOTICE: three-vrm MToon already consumes scene LightProbe irradiance.
+            // Keep it on a single IBL path to avoid double-applying diffuse IBL.
+            if ('toneMapped' in mat)
+              mat.toneMapped = false
           }
           else if (isShaderMat(mat)) {
             // --- Shader material, further IBL injection needed ---
