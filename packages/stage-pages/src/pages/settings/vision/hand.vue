@@ -20,9 +20,17 @@ const {
   messagePool,
   messageActionTag,
   messageAiRegenEnabled,
+  messageDurationThresholdMs,
+  messageGestureEnabled,
+  autoAsrAfterMessage,
+  messageCooldownMs,
   cameraStatus,
   cameraError,
   handDetected,
+  handOpenness,
+  handIsOpen,
+  chatActive,
+  durationFired,
 } = storeToRefs(store)
 
 const animActionsStore = useAnimationActionsStore()
@@ -257,6 +265,91 @@ function removeMessage(idx: number) {
             v-model="messageAiRegenEnabled"
             :label="t('settings.pages.vision.hand.ai-regen')"
             :description="t('settings.pages.vision.hand.ai-regen-description')"
+          />
+
+          <!-- Duration threshold -->
+          <FieldRange
+            v-model="messageDurationThresholdMs"
+            :label="t('settings.pages.vision.hand.duration-threshold')"
+            :description="t('settings.pages.vision.hand.duration-threshold-description')"
+            :min="500"
+            :max="5000"
+            :step="100"
+            :format-value="v => `${(v / 1000).toFixed(1)}s`"
+          />
+
+          <!-- Gesture trigger -->
+          <FieldCheckbox
+            v-model="messageGestureEnabled"
+            :label="t('settings.pages.vision.hand.gesture-trigger')"
+            :description="t('settings.pages.vision.hand.gesture-trigger-description')"
+          />
+
+          <!-- Live gesture status (visible when camera is running) -->
+          <div
+            v-if="cameraStatus === 'running' && handDetected"
+            :class="[
+              'flex', 'flex-col', 'gap-2', 'rounded-lg',
+              'bg-white', 'px-4', 'py-3', 'dark:bg-neutral-900',
+            ]"
+          >
+            <div :class="['flex', 'items-center', 'justify-between']">
+              <span :class="['text-xs', 'font-medium', 'text-neutral-500', 'dark:text-neutral-400']">
+                {{ t('settings.pages.vision.hand.gesture-status') }}
+              </span>
+              <div :class="['flex', 'items-center', 'gap-2']">
+                <div
+                  :class="[
+                    'h-2.5', 'w-2.5', 'rounded-full', 'shrink-0', 'transition-colors', 'duration-150',
+                    handIsOpen ? 'bg-emerald-400' : 'bg-amber-400',
+                  ]"
+                />
+                <span :class="['text-xs', 'font-medium']">
+                  {{ handIsOpen ? t('settings.pages.vision.hand.gesture-open') : t('settings.pages.vision.hand.gesture-closed') }}
+                </span>
+              </div>
+            </div>
+            <!-- Openness bar -->
+            <div :class="['h-1.5', 'w-full', 'rounded-full', 'bg-neutral-200', 'dark:bg-neutral-700', 'overflow-hidden']">
+              <div
+                :class="[
+                  'h-full', 'rounded-full', 'transition-all', 'duration-100',
+                  handIsOpen ? 'bg-emerald-400' : 'bg-amber-400',
+                ]"
+                :style="{ width: `${(handOpenness * 100).toFixed(0)}%` }"
+              />
+            </div>
+            <!-- Suppression status -->
+            <div v-if="chatActive" :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['h-2.5', 'w-2.5', 'rounded-full', 'shrink-0', 'bg-red-400', 'animate-pulse']" />
+              <span :class="['text-xs', 'text-red-400']">
+                {{ t('settings.pages.vision.hand.trigger-suppressed') }}
+              </span>
+            </div>
+            <div v-else-if="durationFired" :class="['flex', 'items-center', 'gap-2']">
+              <div :class="['h-2.5', 'w-2.5', 'rounded-full', 'shrink-0', 'bg-emerald-400']" />
+              <span :class="['text-xs', 'text-emerald-500']">
+                {{ t('settings.pages.vision.hand.trigger-fired') }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Auto-ASR after response -->
+          <FieldCheckbox
+            v-model="autoAsrAfterMessage"
+            :label="t('settings.pages.vision.hand.auto-asr')"
+            :description="t('settings.pages.vision.hand.auto-asr-description')"
+          />
+
+          <!-- Cooldown -->
+          <FieldRange
+            v-model="messageCooldownMs"
+            :label="t('settings.pages.vision.hand.cooldown')"
+            :description="t('settings.pages.vision.hand.cooldown-description')"
+            :min="1000"
+            :max="15000"
+            :step="500"
+            :format-value="v => `${(v / 1000).toFixed(1)}s`"
           />
         </template>
       </div>

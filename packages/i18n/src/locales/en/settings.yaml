@@ -965,9 +965,24 @@ pages:
       action-tag-description: Play a random action from this tag pool when arm is raised
       ai-regen: AI Regeneration
       ai-regen-description: After using a message, generate a new one using the LLM
+      duration-threshold: Raise Duration Threshold
+      duration-threshold-description: How long the arm must be raised before triggering a message
+      gesture-trigger: Gesture Trigger
+      gesture-trigger-description: An open→close hand gesture while arm is raised also triggers a message (bypasses duration threshold)
+      auto-asr: Auto-Open Microphone
+      auto-asr-description: Automatically open the microphone after the AI finishes speaking, so it can listen for your reply (requires Hearing auto-send enabled)
+      cooldown: Trigger Cooldown
+      cooldown-description: Minimum time between hand-raise message triggers
+      gesture-status: Gesture Status
+      gesture-open: Open
+      gesture-closed: Closed
+      trigger-suppressed: Suppressed (chat active)
+      trigger-fired: Triggered
     scene:
       title: Scene Detection
       description: Describe the surroundings using camera and vision LLM
+      enable: Enable Scene Detection
+      enable-description: Periodically capture and describe the visual environment using a vision LLM
     debug:
       title: Debugging
       description: Live status for all vision detection features

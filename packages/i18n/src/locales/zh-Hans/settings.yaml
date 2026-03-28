@@ -879,6 +879,10 @@ pages:
   scene:
     description: 配置角色所在环境
     title: 场景
+  vision:
+    scene:
+      enable: 启用场景检测
+      enable-description: 定期使用视觉大模型捕获并描述当前视觉环境
   system:
     color-scheme:
       description: 更改舞台的配色方案

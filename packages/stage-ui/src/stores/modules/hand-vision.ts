@@ -43,6 +43,31 @@ export const useHandVisionStore = defineStore('hand-vision', () => {
   const requireArmRaised = useLocalStorageManualReset('settings/hand-vision/require-arm-raised', true)
 
   /**
+   * How long (ms) the arm must be continuously raised before triggering a message.
+   * Prevents accidental triggers from brief hand movements.
+   */
+  const messageDurationThresholdMs = useLocalStorageManualReset('settings/hand-vision/message-duration-ms', 2000)
+
+  /**
+   * When enabled, an open→close hand gesture while arm is raised also triggers
+   * a message (bypasses the duration threshold).
+   */
+  const messageGestureEnabled = useLocalStorageManualReset('settings/hand-vision/message-gesture-enabled', true)
+
+  /**
+   * When enabled, the microphone activates automatically after the AI finishes speaking
+   * in response to a hand-raise message. Combined with hearing auto-send, this enables
+   * a fully hands-free conversation flow.
+   */
+  const autoAsrAfterMessage = useLocalStorageManualReset('settings/hand-vision/auto-asr-after-message', false)
+
+  /**
+   * Cooldown (ms) after a hand-raise message before another can trigger.
+   * Prevents rapid re-triggers across raise cycles.
+   */
+  const messageCooldownMs = useLocalStorageManualReset('settings/hand-vision/message-cooldown-ms', 5000)
+
+  /**
    * Multiplier for the gaze movement range. 1.0 = default; higher values make AIRI's
    * eyes move further toward the edges of the frame when tracking the hand.
    */
@@ -87,45 +112,128 @@ export const useHandVisionStore = defineStore('hand-vision', () => {
   const lastFaceCount = ref(0)
 
   /**
-   * When set, Stage.vue should send this as a chat message then call clearPendingMessage().
-   * Arm raise only populates this once per raise (cleared on lower + re-raise).
+   * When set, App.vue should send this as a chat message then call clearPendingMessage().
+   * Guarded by duration threshold, gesture trigger, chat-active suppression, and cooldown.
    */
   const pendingMessage = ref<string | null>(null)
 
   /** Index of the message that was most recently used (for AI regen replacement). */
   const lastUsedMessageIndex = ref<number>(-1)
 
-  // --- Actions ---
+  /** Timestamp when arm was first continuously detected as raised (0 = not raised). */
+  const armRaisedSinceMs = ref(0)
+
+  /** Whether the duration threshold has already fired for this raise cycle. */
+  const durationFired = ref(false)
 
   /**
-   * Called by HandGazeFeature.vue when an arm raise is detected.
-   * Fires at most once per raise — subsequent calls before a lower are no-ops for messages.
+   * True when conversation is active (sending to LLM, streaming response, or TTS playing).
+   * Set by App.vue watcher. Suppresses new hand-raise message triggers.
+   */
+  const chatActive = ref(false)
+
+  /** When true, the microphone should be activated after TTS finishes. Set by App.vue. */
+  const pendingAutoAsr = ref(false)
+
+  /** Current hand openness value (0=fist, 1=fully open). Updated by HandGazeFeature.vue. */
+  const handOpenness = ref(0)
+
+  /** Whether the hand is currently in the "open" state (above hysteresis threshold). */
+  const handIsOpen = ref(false)
+
+  /** Timestamp of the last successful message trigger (for cooldown enforcement). */
+  const lastTriggerMs = ref(0)
+
+  // --- Actions ---
+
+  /** Pick a random message from the pool and set it as pending. */
+  function _pickAndSetMessage(): boolean {
+    const pool = messagePool.value
+    if (!pool.length)
+      return false
+    const idx = Math.floor(Math.random() * pool.length)
+    lastUsedMessageIndex.value = idx
+    pendingMessage.value = pool[idx]
+    lastTriggerMs.value = Date.now()
+    return true
+  }
+
+  /** Check common guards: messageEnabled, not chatActive, no pending message, cooldown elapsed. */
+  function _canTrigger(now: number): boolean {
+    if (!messageEnabled.value)
+      return false
+    if (chatActive.value)
+      return false
+    if (pendingMessage.value !== null)
+      return false
+    if (now - lastTriggerMs.value < messageCooldownMs.value)
+      return false
+    return true
+  }
+
+  /**
+   * Called by HandGazeFeature.vue every frame when an arm raise is detected.
+   * Only updates detection state and initializes the raise timestamp.
+   * Message triggering is handled by tryTriggerByDuration() and tryTriggerByGesture().
    */
   function onHandRaised() {
     handDetected.value = true
-    if (messageEnabled.value && pendingMessage.value === null) {
-      const pool = messagePool.value
-      if (pool.length) {
-        const idx = Math.floor(Math.random() * pool.length)
-        lastUsedMessageIndex.value = idx
-        pendingMessage.value = pool[idx]
-      }
+    if (armRaisedSinceMs.value === 0) {
+      armRaisedSinceMs.value = Date.now()
     }
   }
 
   /** Called by HandGazeFeature.vue when the arm is no longer raised. */
   function onHandLost() {
     handDetected.value = false
+    armRaisedSinceMs.value = 0
+    durationFired.value = false
   }
 
-  /** Called by Stage.vue after consuming the pending message. */
+  /**
+   * Attempt to trigger a message based on arm raise duration.
+   * Called each frame by HandGazeFeature.vue while the arm is raised.
+   */
+  function tryTriggerByDuration(now: number): boolean {
+    if (durationFired.value)
+      return false
+    if (!_canTrigger(now))
+      return false
+    if (armRaisedSinceMs.value === 0)
+      return false
+    if (now - armRaisedSinceMs.value < messageDurationThresholdMs.value)
+      return false
+    durationFired.value = true
+    return _pickAndSetMessage()
+  }
+
+  /**
+   * Attempt to trigger a message based on an open→close hand gesture.
+   * Called by the gesture state machine callback in HandGazeFeature.vue.
+   */
+  function tryTriggerByGesture(): boolean {
+    if (!messageGestureEnabled.value)
+      return false
+    if (!handDetected.value)
+      return false
+    if (!_canTrigger(Date.now()))
+      return false
+    return _pickAndSetMessage()
+  }
+
+  /** Called by App.vue after consuming the pending message. Records cooldown timestamp. */
   function clearPendingMessage() {
     pendingMessage.value = null
   }
 
+  /** Set the chat-active guard. Called by App.vue watcher. */
+  function setChatActive(active: boolean) {
+    chatActive.value = active
+  }
+
   /**
    * Replace the last-used hand message with a freshly AI-generated one.
-   * Called by Stage.vue after sending the message if messageAiRegenEnabled is true.
+   * Called by App.vue after sending the message if messageAiRegenEnabled is true.
    */
   function applyRegenMessage(newMessage: string) {
     const idx = lastUsedMessageIndex.value
@@ -145,6 +253,10 @@ export const useHandVisionStore = defineStore('hand-vision', () => {
     messageActionTag,
     messageAiRegenEnabled,
     requireArmRaised,
+    messageDurationThresholdMs,
+    messageGestureEnabled,
+    autoAsrAfterMessage,
+    messageCooldownMs,
     gazeAmplitude,
     gazeInvertX,
     gazeInvertY,
@@ -158,11 +270,21 @@ export const useHandVisionStore = defineStore('hand-vision', () => {
     lastFaceCount,
     pendingMessage,
     lastUsedMessageIndex,
+    armRaisedSinceMs,
+    durationFired,
+    chatActive,
+    pendingAutoAsr,
+    lastTriggerMs,
+    handOpenness,
+    handIsOpen,
 
     // Actions
     onHandRaised,
     onHandLost,
+    tryTriggerByDuration,
+    tryTriggerByGesture,
     clearPendingMessage,
+    setChatActive,
     applyRegenMessage,
   }
 })

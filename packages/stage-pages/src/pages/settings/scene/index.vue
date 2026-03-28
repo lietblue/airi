@@ -1,9 +1,21 @@
 <script setup lang="ts">
-import { Callout } from '@proj-airi/ui'
+import { useVisionProcessingStore } from '@proj-airi/stage-ui/stores/modules/vision'
+import { Callout, FieldCheckbox } from '@proj-airi/ui'
+import { storeToRefs } from 'pinia'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+const visionProcessingStore = useVisionProcessingStore()
+const { enabled } = storeToRefs(visionProcessingStore)
 </script>
 
 <template>
-  <div>
+  <div :class="['flex', 'flex-col', 'gap-6']">
+    <FieldCheckbox
+      v-model="enabled"
+      :label="t('settings.pages.vision.scene.enable')"
+      :description="t('settings.pages.vision.scene.enable-description')"
+    />
     <Callout
       label="In development, needs your help!"
       theme="orange"

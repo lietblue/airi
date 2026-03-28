@@ -32,6 +32,9 @@ function countInWindow(history: number[], windowMs: number) {
 }
 
 export const useVisionProcessingStore = defineStore('vision-processing', () => {
+  /** Whether scene detection is enabled. Off by default to avoid unexpected camera/LLM usage. */
+  const enabled = useLocalStorageManualReset<boolean>('settings/vision/scene-enabled', false)
+
   const captureIntervalMs = useLocalStorageManualReset<number>(
     'settings/vision/capture-interval-ms',
     DEFAULT_CAPTURE_INTERVAL_MS,
@@ -162,6 +165,7 @@ export const useVisionProcessingStore = defineStore('vision-processing', () => {
     stopTicker()
     resetMetrics()
     captureIntervalMs.reset()
+    enabled.reset()
   }
 
   watch(captureIntervalMs, (next, previous) => {
@@ -178,6 +182,7 @@ export const useVisionProcessingStore = defineStore('vision-processing', () => {
   })
 
   return {
+    enabled,
     captureIntervalMs,
     isRunning,
     isProcessing,

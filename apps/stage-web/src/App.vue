@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { OnboardingDialog, OnboardingStepAnalyticsNotice, ToasterRoot } from '@proj-airi/stage-ui/components'
 import { isPosthogAvailableInBuild, useSharedAnalyticsStore } from '@proj-airi/stage-ui/stores/analytics'
+import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useCharacterOrchestratorStore, useCharacterStore } from '@proj-airi/stage-ui/stores/character'
+import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
 import { useDisplayModelsStore } from '@proj-airi/stage-ui/stores/display-models'
 import { useModsServerChannelStore } from '@proj-airi/stage-ui/stores/mods/api/channel-server'
@@ -35,6 +37,8 @@ const handVisionStore = useHandVisionStore()
 const animationActionsStore = useAnimationActionsStore()
 const characterStore = useCharacterStore()
 const visionProcessingStore = useVisionProcessingStore()
+const settingsAudioDeviceStore = useSettingsAudioDevice()
+const chatSessionStore = useChatSessionStore()
 const { state: presenceState } = storeToRefs(presenceStore)
 
 // Speak a welcome message and play the configured welcome action when someone appears
@@ -50,7 +54,11 @@ watch(() => presenceStore.pendingWelcome, async (msg) => {
   await characterStore.emitTextOutput(msg)
 })
 
-// Speak a hand-raised message and play the configured action when arm is raised
+// --- Stores needed for chat-active suppression and hand-raise message sending ---
+const speakingStore = useSpeakingStore()
+const chatOrchestrator = useChatOrchestratorStore()
+
+// Emit a hand-raised message as a fake assistant reply: TTS + chat history, no LLM round-trip
 watch(() => handVisionStore.pendingMessage, async (msg) => {
   if (!msg)
     return
@@ -60,16 +68,100 @@ watch(() => handVisionStore.pendingMessage, async (msg) => {
     if (id)
       animationActionsStore.playAction(id, 'tool')
   }
+
+  // If auto-ASR is enabled, flag that we should open the mic after TTS finishes
+  if (handVisionStore.autoAsrAfterMessage)
+    handVisionStore.pendingAutoAsr = true
+
+  // Add as an assistant message to the active chat session so it appears in the chat UI
+  const sessionId = chatSessionStore.activeSessionId
+  if (sessionId) {
+    const messages = chatSessionStore.sessionMessages[sessionId]
+    if (messages) {
+      messages.push({ role: 'assistant', content: msg, slices: [], tool_results: [], createdAt: Date.now() })
+      chatSessionStore.persistSessionMessages(sessionId)
+    }
+  }
+
+  // Play TTS via speech pipeline (no LLM request)
   await characterStore.emitTextOutput(msg)
+
+  // Fallback: if TTS never started (no provider, error, etc.), nowSpeaking never fires.
+  // Directly activate ASR here if pendingAutoAsr is still pending after emitTextOutput resolves.
+  if (handVisionStore.pendingAutoAsr && !speakingStore.nowSpeaking) {
+    handVisionStore.pendingAutoAsr = false
+    if (!settingsAudioDeviceStore.enabled)
+      settingsAudioDeviceStore.enabled = true
+  }
 })
 
-// Gate LLM scene detection on presence active state
+// --- Chat-active suppression: prevent hand-raise triggers during conversation ---
+
+watch(
+  () => chatOrchestrator.sending || speakingStore.nowSpeaking,
+  active => handVisionStore.setChatActive(active),
+  { immediate: true },
+)
+
+// --- Auto-ASR: open microphone after TTS finishes speaking ---
+// When pendingAutoAsr is true and TTS stops, enable the microphone.
+// The existing ChatArea watchers will auto-start listening and auto-send via VAD/debounce.
+watch(
+  () => speakingStore.nowSpeaking,
+  (speaking, wasSpeaking) => {
+    if (wasSpeaking && !speaking && handVisionStore.pendingAutoAsr) {
+      handVisionStore.pendingAutoAsr = false
+      if (!settingsAudioDeviceStore.enabled) {
+        settingsAudioDeviceStore.enabled = true
+      }
+    }
+  },
+)
+
+// After auto-ASR triggered conversation completes, turn mic back off
+// NOTICE: This watches for chatOrchestrator.sending going false after an auto-ASR turn.
+// We track whether the mic was auto-enabled so we only disable it if we turned it on.
+let autoAsrActivatedMic = false
+watch(() => settingsAudioDeviceStore.enabled, (enabled) => {
+  // Track when we auto-enable the mic (pendingAutoAsr was just consumed)
+  if (enabled && !autoAsrActivatedMic && handVisionStore.autoAsrAfterMessage) {
+    autoAsrActivatedMic = true
+  }
+})
+
+watch(() => chatOrchestrator.sending, (sending, wasSending) => {
+  // After a send completes and we auto-activated the mic, turn it off
+  if (wasSending && !sending && autoAsrActivatedMic) {
+    autoAsrActivatedMic = false
+    // Wait for TTS to finish before disabling (the speaking watcher handles the actual disable)
+    // Only disable if not currently speaking (TTS may still be playing the response)
+    if (!speakingStore.nowSpeaking) {
+      settingsAudioDeviceStore.enabled = false
+    }
+  }
+})
+
+// Also disable mic when TTS finishes if auto-ASR conversation turn completed
+watch(() => speakingStore.nowSpeaking, (speaking, wasSpeaking) => {
+  if (wasSpeaking && !speaking && autoAsrActivatedMic && !chatOrchestrator.sending) {
+    autoAsrActivatedMic = false
+    settingsAudioDeviceStore.enabled = false
+  }
+})
+
+// Gate LLM scene detection on presence active state and scene enabled flag
 watch(presenceState, (s) => {
-  if (!presenceStore.enabled)
+  if (!presenceStore.enabled || !visionProcessingStore.enabled)
     return
   if (s === 'active')
     visionProcessingStore.startTicker(async () => {})
   else
+    visionProcessingStore.stopTicker()
+})
+
+// Stop the ticker immediately when scene detection is disabled
+watch(() => visionProcessingStore.enabled, (v) => {
+  if (!v)
     visionProcessingStore.stopTicker()
 })
 
@@ -79,10 +171,8 @@ const displayModelsStore = useDisplayModelsStore()
 const settingsStore = useSettings()
 const settings = storeToRefs(settingsStore)
 const onboardingStore = useOnboardingStore()
-const chatSessionStore = useChatSessionStore()
 const serverChannelStore = useModsServerChannelStore()
 const characterOrchestratorStore = useCharacterOrchestratorStore()
-const settingsAudioDeviceStore = useSettingsAudioDevice()
 const { showingSetup } = storeToRefs(onboardingStore)
 const { isDark } = useTheme()
 const cardStore = useAiriCardStore()

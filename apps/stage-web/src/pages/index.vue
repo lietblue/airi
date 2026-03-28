@@ -13,22 +13,15 @@ import { useBackgroundStore } from '@proj-airi/stage-layouts/stores/background'
 import { WidgetStage } from '@proj-airi/stage-ui/components/scenes'
 import { useAudioRecorder } from '@proj-airi/stage-ui/composables/audio/audio-recorder'
 import { useVAD } from '@proj-airi/stage-ui/stores/ai/models/vad'
-import { useCharacterStore } from '@proj-airi/stage-ui/stores/character'
 import { useChatOrchestratorStore } from '@proj-airi/stage-ui/stores/chat'
 import { useLive2d } from '@proj-airi/stage-ui/stores/live2d'
-import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
-import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-vision'
 import { useHearingSpeechInputPipeline } from '@proj-airi/stage-ui/stores/modules/hearing'
-import { usePresenceStore } from '@proj-airi/stage-ui/stores/modules/presence'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
 import { breakpointsTailwind, useBreakpoints, useMouse } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
-
-import HandGazeFeature from '../components/features/HandGazeFeature.vue'
-import PresenceDetector from '../components/features/PresenceDetector.vue'
 
 const paused = ref(false)
 
@@ -156,40 +149,10 @@ watch([stream, () => vadLoaded.value], async ([s, loaded]) => {
   }
 })
 
-// --- Vision system (presence + hand gaze) ---
-const presenceStore = usePresenceStore()
-const handVisionStore = useHandVisionStore()
-const characterStore = useCharacterStore()
-const animationActionsStore = useAnimationActionsStore()
-const { enabled: presenceEnabled, pendingWelcome, welcomeActionTag } = storeToRefs(presenceStore)
-const { gazeEnabled, messageEnabled, pendingMessage, messageActionTag } = storeToRefs(handVisionStore)
-
-// When presence transitions idle → active, speak the welcome message and optionally play
-// a tagged action alongside it.
-watch(pendingWelcome, (msg) => {
-  if (!msg)
-    return
-  characterStore.emitTextOutput(msg)
-  if (welcomeActionTag.value) {
-    const id = animationActionsStore.pickRandomFromTag(welcomeActionTag.value)
-    if (id)
-      animationActionsStore.playAction(id, 'tool')
-  }
-  presenceStore.clearPendingWelcome()
-})
-
-// When an arm raise is detected, speak the hand message and optionally play a tagged action.
-watch(pendingMessage, (msg) => {
-  if (!msg)
-    return
-  characterStore.emitTextOutput(msg)
-  if (messageActionTag.value) {
-    const id = animationActionsStore.pickRandomFromTag(messageActionTag.value)
-    if (id)
-      animationActionsStore.playAction(id, 'tool')
-  }
-  handVisionStore.clearPendingMessage()
-})
+// --- Vision system ---
+// NOTICE: pendingWelcome and pendingMessage watchers are handled in App.vue (always mounted).
+// They were previously duplicated here, causing double-fire when both App.vue and index.vue
+// were mounted simultaneously.
 </script>
 
 <template>
@@ -222,10 +185,7 @@ watch(pendingMessage, (msg) => {
         <MobileInteractiveArea v-if="isMobile" @settings-open="handleSettingsOpen" />
       </div>
     </div>
-    <!-- Headless vision components — mount only when their feature is enabled to avoid
-         unnecessary camera permission requests. -->
-    <PresenceDetector v-if="presenceEnabled" />
-    <HandGazeFeature v-if="gazeEnabled || messageEnabled" />
+    <!-- NOTICE: PresenceDetector and HandGazeFeature are mounted in App.vue (persistent across routes). -->
   </BackgroundProvider>
 </template>
 

@@ -6,6 +6,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { createMediaPipeBackend, createMocapEngine } from '@proj-airi/model-driver-mediapipe'
 import { useModelStore } from '@proj-airi/stage-ui-three'
 import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-vision'
+import { computeOpenness, createGestureStateMachine } from '@proj-airi/stage-ui/utils/hand-gesture'
 import { storeToRefs } from 'pinia'
 import { Euler, Plane, Quaternion, Raycaster, Vector2, Vector3 } from 'three'
 import { onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
@@ -24,6 +25,19 @@ const {
 const modelStore = useModelStore()
 const { lookAtTarget, eyeHeight, trackingMode } = storeToRefs(modelStore)
 let savedTrackingMode: string | undefined
+
+// --- Gesture state machine for open→close detection ---
+const gestureSM = createGestureStateMachine({
+  onOpen: () => {
+    handVisionStore.handIsOpen = true
+  },
+  onClose: () => {
+    handVisionStore.handIsOpen = false
+  },
+  onOpenClose: () => {
+    handVisionStore.tryTriggerByGesture()
+  },
+})
 
 // --- DOM refs ---
 const videoRef = ref<HTMLVideoElement>()
@@ -231,12 +245,26 @@ function onPerception(state: PerceptionState) {
   const raised = hand !== null && isArmRaised(hand, state.pose)
 
   if (raised) {
-    _lastHandSeenMs = Date.now()
+    const now = Date.now()
+    _lastHandSeenMs = now
     _handTarget = handNdcToWorld(hand.landmarks2d[0].x, hand.landmarks2d[0].y)
+
+    // Update detection state and raise timestamp
     handVisionStore.onHandRaised()
+
+    // Attempt duration-based trigger (checks threshold internally)
+    handVisionStore.tryTriggerByDuration(now)
+
+    // Feed gesture state machine for open→close detection
+    const openness = computeOpenness(hand.landmarks2d)
+    handVisionStore.handOpenness = openness
+    gestureSM.process(openness)
   }
   else {
     handVisionStore.onHandLost()
+    handVisionStore.handOpenness = 0
+    handVisionStore.handIsOpen = false
+    gestureSM.reset()
   }
 }
 

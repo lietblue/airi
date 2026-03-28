@@ -5,6 +5,7 @@ import { createMediaPipeBackend, createMocapEngine } from '@proj-airi/model-driv
 import { ThreeScene, useModelStore } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { useSettings } from '@proj-airi/stage-ui/stores/settings'
+import { computeOpenness, createGestureStateMachine } from '@proj-airi/stage-ui/utils/hand-gesture'
 import { storeToRefs } from 'pinia'
 import { Euler, Plane, Quaternion, Raycaster, Vector2, Vector3 } from 'three'
 import { onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
@@ -96,8 +97,9 @@ function activate(idx: number) {
   }, 1800)
 }
 
-// --- Gesture state machine (plain vars — no reactive overhead needed) ---
-let gestureIsOpen = false
+// --- Gesture state machine (uses shared utility) ---
+// The devtools page tracks additional compound gestures (quick double clap, slow double open)
+// on top of the basic open/close detection from the shared utility.
 let recentClapTimes: number[] = []
 let recentOpenTimes: number[] = []
 let pendingClapTimer: ReturnType<typeof setTimeout> | undefined
@@ -145,34 +147,16 @@ function onHandClap() {
   }
 }
 
-// --- Hand openness via finger extension (robust to scale/distance changes) ---
-// In image coordinates y increases downward; a finger is extended when its
-// tip sits higher (smaller y) than its proximal-intermediate joint (pip).
-function computeOpenness(lm: { x: number, y: number }[]): number {
-  if (lm.length < 21)
-    return 0
-  // [fingertip index, pip index] for the four main fingers
-  const fingers: [number, number][] = [[8, 6], [12, 10], [16, 14], [20, 18]]
-  const extended = fingers.filter(([tip, pip]) => lm[tip].y < lm[pip].y).length
-  return extended / 4 // 0 = fist, 1 = fully open
-}
-
-function processGesture(openness: number) {
-  const OPEN_THRESH = 0.75 // ≥3 fingers extended
-  const CLOSE_THRESH = 0.25 // ≤1 finger extended
-  const wasOpen = gestureIsOpen
-
-  if (!wasOpen && openness >= OPEN_THRESH) {
-    gestureIsOpen = true
+const gestureSM = createGestureStateMachine({
+  onOpen: () => {
     handIsOpen.value = true
     onHandOpen()
-  }
-  else if (wasOpen && openness <= CLOSE_THRESH) {
-    gestureIsOpen = false
+  },
+  onClose: () => {
     handIsOpen.value = false
     onHandClap()
-  }
-}
+  },
+})
 
 // --- Project 2D hand position to 3D lookAt world space ---
 // Mirrors the lookAtMouse() logic inside VRMModel.vue (packages/stage-ui-three).
@@ -479,7 +463,10 @@ function onPerception(state: PerceptionState) {
     _handTarget = handNdcToWorld(lm[0].x, lm[0].y)
     const openness = computeOpenness(lm)
     handOpenness.value = openness
-    processGesture(openness)
+    gestureSM.process(openness)
+  }
+  else {
+    gestureSM.reset()
   }
 
   drawHandOverlay(state)
