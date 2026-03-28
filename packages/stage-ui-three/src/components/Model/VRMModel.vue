@@ -424,6 +424,15 @@ function bindManagedVrmInstanceRenderLoop() {
 
 function commitManagedVrmInstance(instance: ManagedVrmInstance) {
   scene.value?.add(instance.group)
+
+  // NOTICE: Pre-compile all shaders synchronously at load time so that the
+  // first render frame does not stall the main thread with GPU shader
+  // compilation.  Three.js r128 only supports the synchronous compile();
+  // upgrade to compileAsync() once the project moves to r155+.
+  const rendererInst = getRendererInstance()
+  if (rendererInst && scene.value && camera.value)
+    rendererInst.compile(scene.value, camera.value)
+
   applyManagedVrmInstance(instance)
   bindManagedVrmInstanceRenderLoop()
   emit('loaded', modelSrc.value!)
