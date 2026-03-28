@@ -9,7 +9,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 // NOTICE: Derive instance type without a direct @mediapipe/tasks-vision import —
 // tasks-vision is already a dep of model-driver-mediapipe; importing via VisionTaskModule
 // prevents a duplicate package resolution in stage-web.
-type FaceLandmarkerType = Awaited<ReturnType<VisionTaskModule['FaceLandmarker']['createFromOptions']>>
+type FaceDetectorType = Awaited<ReturnType<VisionTaskModule['FaceDetector']['createFromOptions']>>
 
 // NOTICE: Tick interval for presence detection. 1 fps is sufficient for person-in-room
 // detection and keeps CPU usage negligible.
@@ -20,40 +20,34 @@ const presenceStore = usePresenceStore()
 const videoRef = ref<HTMLVideoElement>()
 
 let stream: MediaStream | undefined
-let faceLandmarker: FaceLandmarkerType | undefined
+let faceDetector: FaceDetectorType | undefined
 let tickHandle: ReturnType<typeof setInterval> | null = null
 
 async function initModel() {
-  faceLandmarker?.close()
-  faceLandmarker = undefined
+  faceDetector?.close()
+  faceDetector = undefined
 
-  const { FaceLandmarker, FilesetResolver } = await importTasksVision()
+  // NOTICE: FaceDetector (blaze_face_short_range) is significantly lighter than
+  // FaceLandmarker — it outputs bounding boxes only (no 468-point mesh), which is
+  // sufficient for presence detection. Model file: blaze_face_short_range.tflite (224 KB).
+  const { FaceDetector, FilesetResolver } = await importTasksVision()
   const vision = await FilesetResolver.forVisionTasks(visionTaskWasmRoot)
-  // NOTICE: numFaces: 1 — presence detection only needs to know if at least one face
-  // exists; setting higher values increases per-frame cost for no benefit here.
-  // outputFaceBlendshapes and outputFacialTransformationMatrixes are disabled because
-  // we only read faceLandmarks.length (face count), not the landmark geometry.
-  // For even lighter detection, replace with FaceDetector (bounding-box only model)
-  // once a face_detector.task asset is available in this package.
-  faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: visionTaskAssets.face },
+  faceDetector = await FaceDetector.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: visionTaskAssets.faceDetector },
     runningMode: 'VIDEO',
-    numFaces: 1,
-    outputFaceBlendshapes: false,
-    outputFacialTransformationMatrixes: false,
   })
 }
 
 function tick() {
   const video = videoRef.value
-  if (!video || !faceLandmarker || video.readyState < 2) {
+  if (!video || !faceDetector || video.readyState < 2) {
     presenceStore.onFaceDetected(0)
     return
   }
 
   try {
-    const result = faceLandmarker.detectForVideo(video, performance.now())
-    presenceStore.onFaceDetected(result.faceLandmarks?.length ?? 0)
+    const result = faceDetector.detectForVideo(video, performance.now())
+    presenceStore.onFaceDetected(result.detections?.length ?? 0)
   }
   catch {
     presenceStore.onFaceDetected(0)
@@ -72,7 +66,7 @@ async function start() {
     videoRef.value.srcObject = stream
     await videoRef.value.play()
 
-    if (!faceLandmarker)
+    if (!faceDetector)
       await initModel()
 
     tickHandle = setInterval(tick, TICK_INTERVAL_MS)
@@ -97,6 +91,8 @@ function stop() {
   catch {}
 
   stream = undefined
+  faceDetector?.close()
+  faceDetector = undefined
 
   if (videoRef.value)
     videoRef.value.srcObject = null
