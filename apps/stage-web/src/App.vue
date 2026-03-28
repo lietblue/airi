@@ -14,9 +14,10 @@ import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-visi
 import { usePresenceStore } from '@proj-airi/stage-ui/stores/modules/presence'
 import { useVisionProcessingStore } from '@proj-airi/stage-ui/stores/modules/vision'
 import { useOnboardingStore } from '@proj-airi/stage-ui/stores/onboarding'
-import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
+import { useSettings, useSettingsAudioDevice, useSettingsGreenScreen } from '@proj-airi/stage-ui/stores/settings'
 import { useTheme } from '@proj-airi/ui'
 import { StageTransitionGroup } from '@proj-airi/ui-transitions'
+import { useMagicKeys, whenever } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -178,6 +179,29 @@ const { isDark } = useTheme()
 const cardStore = useAiriCardStore()
 const analyticsStore = useSharedAnalyticsStore()
 
+// --- Green Screen Mode: toggle with H key ---
+const greenScreenStore = useSettingsGreenScreen()
+const { h: hKey } = useMagicKeys()
+let lastHPress = 0
+whenever(hKey, () => {
+  // Skip if user is typing in an input, textarea, or contenteditable element
+  const el = document.activeElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable))
+    return
+
+  const now = Date.now()
+  if (greenScreenStore.enabled) {
+    // Double-press H (within 300ms) to exit green screen
+    if (now - lastHPress < 300)
+      greenScreenStore.toggle()
+    lastHPress = now
+  }
+  else {
+    // Single press H to enter green screen
+    greenScreenStore.toggle()
+  }
+})
+
 const primaryColor = computed(() => {
   return isDark.value
     ? `color-mix(in srgb, oklch(95% var(--chromatic-chroma-900) calc(var(--chromatic-hue) + ${0})) 70%, oklch(50% 0 360))`
@@ -270,19 +294,21 @@ function handleSetupSkipped() {
     </RouterView>
   </StageTransitionGroup>
 
-  <ToasterRoot @close="id => toast.dismiss(id)">
-    <Toaster />
-  </ToasterRoot>
+  <template v-if="!greenScreenStore.enabled">
+    <ToasterRoot @close="id => toast.dismiss(id)">
+      <Toaster />
+    </ToasterRoot>
 
-  <!-- First Time Setup Dialog -->
-  <OnboardingDialog
-    v-model="showingSetup"
-    :extra-steps="onboardingExtraSteps"
-    @configured="handleSetupConfigured"
-    @skipped="handleSetupSkipped"
-  />
+    <!-- First Time Setup Dialog -->
+    <OnboardingDialog
+      v-model="showingSetup"
+      :extra-steps="onboardingExtraSteps"
+      @configured="handleSetupConfigured"
+      @skipped="handleSetupSkipped"
+    />
 
-  <PerformanceOverlay />
+    <PerformanceOverlay />
+  </template>
 </template>
 
 <style>

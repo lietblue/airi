@@ -18,7 +18,7 @@ import { useLive2d } from '@proj-airi/stage-ui/stores/live2d'
 import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
 import { useHearingSpeechInputPipeline } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
-import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
+import { useSettingsAudioDevice, useSettingsGreenScreen } from '@proj-airi/stage-ui/stores/settings'
 import { breakpointsTailwind, useBreakpoints, useMouse } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
@@ -34,6 +34,7 @@ const { scale, position, positionInPercentageString } = storeToRefs(useLive2d())
 const breakpoints = useBreakpoints(breakpointsTailwind)
 const isMobile = breakpoints.smaller('md')
 
+const greenScreen = useSettingsGreenScreen()
 const backgroundStore = useBackgroundStore()
 const { selectedOption, sampledColor } = storeToRefs(backgroundStore)
 const backgroundSurface = useTemplateRef<InstanceType<typeof BackgroundProvider>>('backgroundSurface')
@@ -158,13 +159,13 @@ watch([stream, () => vadLoaded.value], async ([s, loaded]) => {
 <template>
   <BackgroundProvider
     ref="backgroundSurface"
-    class="widgets top-widgets"
+    :class="['widgets top-widgets', { 'green-screen-active': greenScreen.enabled }]"
     :background="selectedOption"
     :top-color="sampledColor"
   >
     <div relative flex="~ col" z-2 h-100dvh w-100vw of-hidden>
       <!-- header -->
-      <div class="px-0 py-1 md:px-3 md:py-3" w-full gap-2>
+      <div v-show="!greenScreen.enabled" :class="['px-0 py-1 md:px-3 md:py-3']" w-full gap-2>
         <Header class="hidden md:flex" />
         <MobileHeader class="flex md:hidden" />
       </div>
@@ -181,13 +182,25 @@ watch([stream, () => vadLoaded.value], async ([s, loaded]) => {
           :y-offset="positionInPercentageString.y"
           :scale="scale"
         />
-        <InteractiveArea v-if="!isMobile" h="85dvh" absolute right-4 flex flex-1 flex-col max-w="500px" min-w="30%" />
-        <MobileInteractiveArea v-if="isMobile" @settings-open="handleSettingsOpen" />
+        <InteractiveArea v-if="!isMobile && !greenScreen.enabled" h="85dvh" absolute right-4 flex flex-1 flex-col max-w="500px" min-w="30%" />
+        <MobileInteractiveArea v-if="isMobile && !greenScreen.enabled" @settings-open="handleSettingsOpen" />
       </div>
     </div>
     <!-- NOTICE: PresenceDetector and HandGazeFeature are mounted in App.vue (persistent across routes). -->
   </BackgroundProvider>
 </template>
+
+<style>
+/* Green screen mode: hide background layers, overlay, and show green chroma-key */
+.green-screen-active.customized-background {
+  background-color: #00ff00 !important;
+}
+
+.green-screen-active > .absolute.inset-0.z-0,
+.green-screen-active > .theme-overlay {
+  display: none !important;
+}
+</style>
 
 <route lang="yaml">
 name: IndexScenePage
