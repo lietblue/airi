@@ -43,16 +43,34 @@ export function createMediaPipeBackend(): MocapBackend {
     return busy
   }
 
+  // Returns the configured delegate, defaulting to 'GPU' for best performance.
+  // Callers that need CPU explicitly can pass delegate: 'CPU' in MocapConfig.
+  function resolveDelegate(): 'GPU' | 'CPU' {
+    return config?.delegate ?? 'GPU'
+  }
+
   async function ensurePoseLandmarker() {
     if (poseLandmarker)
       return poseLandmarker
 
     const { PoseLandmarker } = tasksVision!
-    poseLandmarker = await PoseLandmarker.createFromOptions(vision!, {
-      baseOptions: { modelAssetPath: visionTaskAssets.pose },
-      runningMode: 'VIDEO',
-      numPoses: 1,
-    })
+    const delegate = resolveDelegate()
+    try {
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.pose, delegate },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+      })
+    }
+    catch {
+      // NOTICE: GPU delegate is unavailable on some devices/browsers (older Windows drivers,
+      // Firefox without WebGL2, etc.). Fall back to CPU so inference still works.
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.pose, delegate: 'CPU' },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+      })
+    }
 
     return poseLandmarker
   }
@@ -62,11 +80,22 @@ export function createMediaPipeBackend(): MocapBackend {
       return handLandmarker
 
     const { HandLandmarker } = tasksVision!
-    handLandmarker = await HandLandmarker.createFromOptions(vision!, {
-      baseOptions: { modelAssetPath: visionTaskAssets.hands },
-      runningMode: 'VIDEO',
-      numHands: 2,
-    })
+    const delegate = resolveDelegate()
+    try {
+      handLandmarker = await HandLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.hands, delegate },
+        runningMode: 'VIDEO',
+        numHands: 2,
+      })
+    }
+    catch {
+      // NOTICE: GPU delegate fallback — see ensurePoseLandmarker for context.
+      handLandmarker = await HandLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.hands, delegate: 'CPU' },
+        runningMode: 'VIDEO',
+        numHands: 2,
+      })
+    }
 
     return handLandmarker
   }
@@ -76,11 +105,22 @@ export function createMediaPipeBackend(): MocapBackend {
       return faceLandmarker
 
     const { FaceLandmarker } = tasksVision!
-    faceLandmarker = await FaceLandmarker.createFromOptions(vision!, {
-      baseOptions: { modelAssetPath: visionTaskAssets.face },
-      runningMode: 'VIDEO',
-      numFaces: 1,
-    })
+    const delegate = resolveDelegate()
+    try {
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.face, delegate },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+      })
+    }
+    catch {
+      // NOTICE: GPU delegate fallback — see ensurePoseLandmarker for context.
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision!, {
+        baseOptions: { modelAssetPath: visionTaskAssets.face, delegate: 'CPU' },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+      })
+    }
 
     return faceLandmarker
   }

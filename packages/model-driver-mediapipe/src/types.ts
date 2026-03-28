@@ -49,6 +49,7 @@ export interface MocapConfig {
   enabled: Record<MocapJob, boolean>
   hz: Record<MocapJob, number>
   maxPeople: 1
+  delegate?: 'GPU' | 'CPU'
 }
 
 export interface FrameSource {
