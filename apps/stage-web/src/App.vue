@@ -123,9 +123,11 @@ watch(() => handVisionStore.pendingMessage, async (msg) => {
 })
 
 // --- Chat-active suppression: prevent hand-raise triggers during conversation ---
-
+// Include autoSendOnce: when one-shot auto-send is active the mic is open waiting for the
+// user to speak, so the conversation is still logically in progress and hand-raise messages
+// should be suppressed.
 watch(
-  () => chatOrchestrator.sending || speakingStore.nowSpeaking,
+  () => chatOrchestrator.sending || speakingStore.nowSpeaking || hearingStore.autoSendOnce,
   active => handVisionStore.setChatActive(active),
   { immediate: true },
 )
@@ -149,14 +151,17 @@ watch(
 )
 
 watch(() => chatOrchestrator.sending, (sending, wasSending) => {
-  // After a send completes and we auto-activated the mic, turn it off
+  // After a send completes and we auto-activated the mic, turn it off.
+  // Only clear autoAsrActivatedMic when we actually disable the mic. If TTS is still
+  // playing, leave the flag so the speaking watcher (below) can pick it up and disable
+  // the mic when TTS finishes. Previously, clearing the flag here while TTS was active
+  // caused the speaking watcher to never fire, leaving the mic permanently enabled.
   if (wasSending && !sending && autoAsrActivatedMic) {
-    autoAsrActivatedMic = false
-    // Wait for TTS to finish before disabling (the speaking watcher handles the actual disable)
-    // Only disable if not currently speaking (TTS may still be playing the response)
     if (!speakingStore.nowSpeaking) {
+      autoAsrActivatedMic = false
       settingsAudioDeviceStore.enabled = false
     }
+    // else: TTS still playing — keep autoAsrActivatedMic = true for the speaking watcher
   }
 })
 

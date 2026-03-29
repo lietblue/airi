@@ -146,12 +146,21 @@ export const useHandVisionStore = defineStore('hand-vision', () => {
 
   // --- Actions ---
 
-  /** Pick a random message from the pool and set it as pending. */
+  /** Pick a random message from the pool (avoiding the last-used one) and set it as pending. */
   function _pickAndSetMessage(): boolean {
     const pool = messagePool.value
     if (!pool.length)
       return false
-    const idx = Math.floor(Math.random() * pool.length)
+    // Avoid repeating the same message consecutively when there are alternatives
+    let idx: number
+    if (pool.length > 1 && lastUsedMessageIndex.value >= 0) {
+      const candidates = Array.from({ length: pool.length }, (_, i) => i)
+        .filter(i => i !== lastUsedMessageIndex.value)
+      idx = candidates[Math.floor(Math.random() * candidates.length)]
+    }
+    else {
+      idx = Math.floor(Math.random() * pool.length)
+    }
     lastUsedMessageIndex.value = idx
     pendingMessage.value = pool[idx]
     lastTriggerMs.value = Date.now()
