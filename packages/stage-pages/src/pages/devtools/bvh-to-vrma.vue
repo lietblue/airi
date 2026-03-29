@@ -352,7 +352,5 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
 
 <route lang="yaml">
 meta:
-  layout: settings
-  title: BVH → VRMA
-  subtitleKey: tamagotchi.settings.devtools.title
+  layout: plain
 </route>
