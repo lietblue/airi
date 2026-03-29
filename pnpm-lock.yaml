@@ -2435,6 +2435,9 @@ importers:
       dompurify:
         specifier: ^3.3.3
         version: 3.3.3
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       nanoid:
         specifier: ^5.1.7
         version: 5.1.7
