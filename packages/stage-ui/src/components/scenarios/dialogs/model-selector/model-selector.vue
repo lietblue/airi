@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import type { DisplayModel } from '../../../../stores/display-models'
+import type { DisplayModel, DisplayModelFile } from '../../../../stores/display-models'
 
 import { Button } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger, EditableArea, EditableEditTrigger, EditableInput, EditablePreview, EditableRoot, EditableSubmitTrigger } from 'reka-ui'
 import { ref, watch } from 'vue'
+
+import VrmBatchEditDialog from '../batch-import-edit/vrm-batch-edit-dialog.vue'
 
 import { DisplayModelFormat, useDisplayModelsStore } from '../../../../stores/display-models'
 
@@ -30,13 +32,13 @@ watch(() => props.selectedModel?.id, (modelId) => {
   highlightDisplayModelCard.value = modelId
 }, { immediate: true })
 
-function handleAddLive2DModel(file: FileList | null) {
-  if (file === null || file.length === 0)
+async function handleAddLive2DModel(files: FileList | null) {
+  if (files === null || files.length === 0)
     return
-  if (!file[0].name.endsWith('.zip'))
-    return
-
-  displayModelStore.addDisplayModel(DisplayModelFormat.Live2dZip, file[0])
+  for (const file of Array.from(files)) {
+    if (file.name.endsWith('.zip'))
+      await displayModelStore.addDisplayModel(DisplayModelFormat.Live2dZip, file)
+  }
 }
 
 function handlePick(m: DisplayModel) {
@@ -50,13 +52,21 @@ function handleMobilePick() {
   emits('close', undefined)
 }
 
-function handleAddVRMModel(file: FileList | null) {
-  if (file === null || file.length === 0)
-    return
-  if (!file[0].name.endsWith('.vrm'))
-    return
+const pendingVrmModels = ref<DisplayModelFile[]>([])
+const showVrmBatchEdit = ref(false)
 
-  displayModelStore.addDisplayModel(DisplayModelFormat.VRM, file[0])
+async function handleAddVRMModel(files: FileList | null) {
+  if (files === null || files.length === 0)
+    return
+  const results = await Promise.all(
+    Array.from(files)
+      .filter(f => f.name.endsWith('.vrm'))
+      .map(f => displayModelStore.addDisplayModel(DisplayModelFormat.VRM, f)),
+  )
+  if (results.length > 0) {
+    pendingVrmModels.value = results
+    showVrmBatchEdit.value = true
+  }
 }
 
 const mapFormatRenderer: Record<DisplayModelFormat, string> = {
@@ -68,8 +78,8 @@ const mapFormatRenderer: Record<DisplayModelFormat, string> = {
   [DisplayModelFormat.PMD]: 'MMD',
 }
 
-const live2dDialog = useFileDialog({ accept: '.zip', multiple: false, reset: true })
-const vrmDialog = useFileDialog({ accept: '.vrm', multiple: false, reset: true })
+const live2dDialog = useFileDialog({ accept: '.zip', multiple: true, reset: true })
+const vrmDialog = useFileDialog({ accept: '.vrm', multiple: true, reset: true })
 
 live2dDialog.onChange(handleAddLive2DModel)
 vrmDialog.onChange(handleAddVRMModel)
@@ -244,4 +254,6 @@ vrmDialog.onChange(handleAddVRMModel)
       Confirm
     </Button>
   </div>
+
+  <VrmBatchEditDialog v-model:show="showVrmBatchEdit" :models="pendingVrmModels" />
 </template>

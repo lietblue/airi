@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import type { DisplayModel } from '@proj-airi/stage-ui/stores/display-models'
+import type { ActionEntry } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 
 import { ThreeScene } from '@proj-airi/stage-ui-three'
+import { VrmaBatchEditDialog } from '@proj-airi/stage-ui/components/scenarios/dialogs/batch-import-edit'
 import { DisplayModelFormat, useDisplayModelsStore } from '@proj-airi/stage-ui/stores/display-models'
 import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 import { useSettings } from '@proj-airi/stage-ui/stores/settings'
@@ -9,6 +11,8 @@ import { Button } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref } from 'vue'
+
+const VRMA_EXT_RE = /\.vrma$/i
 
 const animationActionsStore = useAnimationActionsStore()
 const { actions } = storeToRefs(animationActionsStore)
@@ -35,16 +39,23 @@ function selectModel(model: DisplayModel) {
 }
 
 // Upload .vrma file
-const vrmaDialog = useFileDialog({ accept: '.vrma', multiple: false, reset: true })
+const pendingVrmaActions = ref<ActionEntry[]>([])
+const showVrmaBatchEdit = ref(false)
+
+const vrmaDialog = useFileDialog({ accept: '.vrma', multiple: true, reset: true })
 vrmaDialog.onChange(async (files) => {
   if (!files || files.length === 0)
     return
-  const file = files[0]
-  if (!file.name.endsWith('.vrma'))
-    return
-
-  const entry = await animationActionsStore.addCustomAction(file, file.name.replace('.vrma', ''), '')
-  selectedAnimationId.value = entry.id
+  const entries = await Promise.all(
+    Array.from(files)
+      .filter(f => f.name.endsWith('.vrma'))
+      .map(f => animationActionsStore.addCustomAction(f, f.name.replace(VRMA_EXT_RE, ''), '')),
+  )
+  if (entries.length > 0) {
+    pendingVrmaActions.value = entries
+    showVrmaBatchEdit.value = true
+    selectedAnimationId.value = entries.at(-1)!.id
+  }
 })
 
 // Upload .vrm model
@@ -241,6 +252,8 @@ onMounted(async () => {
       </div>
     </div>
   </div>
+
+  <VrmaBatchEditDialog v-model:show="showVrmaBatchEdit" :actions="pendingVrmaActions" />
 </template>
 
 <route lang="yaml">

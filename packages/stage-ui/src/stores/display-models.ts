@@ -70,9 +70,9 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     const models = [...displayModelsPresets]
 
     try {
-      await localforage.iterate<{ format: DisplayModelFormat, file: File, importedAt: number, previewImage?: string }, void>((val, key) => {
+      await localforage.iterate<{ format: DisplayModelFormat, file: File, name?: string, importedAt: number, previewImage?: string }, void>((val, key) => {
         if (key.startsWith('display-model-')) {
-          models.push({ id: key, format: val.format, type: 'file', file: val.file, name: val.file.name, importedAt: val.importedAt, previewImage: val.previewImage })
+          models.push({ id: key, format: val.format, type: 'file', file: val.file, name: val.name ?? val.file.name, importedAt: val.importedAt, previewImage: val.previewImage })
         }
       })
     }
@@ -101,7 +101,7 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     return generateVrmPreview(file)
   }
 
-  async function addDisplayModel(format: DisplayModelFormat, file: File) {
+  async function addDisplayModel(format: DisplayModelFormat, file: File): Promise<DisplayModelFile> {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
     const newDisplayModel: DisplayModelFile = { id: `display-model-${nanoid()}`, format, type: 'file', file, name: file.name, importedAt: Date.now() }
 
@@ -118,6 +118,8 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
 
     localforage.setItem<DisplayModelFile>(newDisplayModel.id, newDisplayModel)
       .catch(err => console.error(err))
+
+    return newDisplayModel
   }
 
   async function renameDisplayModel(id: string, name: string) {
@@ -127,6 +129,10 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
       return
 
     displayModel.name = name
+    await localforage.setItem(id, displayModel)
+    const idx = displayModels.value.findIndex(m => m.id === id)
+    if (idx !== -1)
+      displayModels.value[idx] = { ...displayModels.value[idx], name }
   }
 
   async function removeDisplayModel(id: string) {
