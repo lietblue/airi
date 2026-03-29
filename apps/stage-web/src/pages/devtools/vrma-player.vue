@@ -10,7 +10,7 @@ import { useSettings } from '@proj-airi/stage-ui/stores/settings'
 import { Button } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 const VRMA_EXT_RE = /\.vrma$/i
 
@@ -77,6 +77,44 @@ function removeUserAnimation(id: string) {
   animationActionsStore.removeCustomAction(id)
   if (selectedAnimationId.value === id)
     selectedAnimationId.value = 'idle_loop'
+}
+
+// ---- Batch select/delete ----
+const batchSelectMode = ref(false)
+const batchSelectedIds = reactive(new Set<string>())
+
+const customActions = computed(() => actions.value.filter(a => !a.isBuiltin))
+
+function toggleBatchSelect(id: string) {
+  if (batchSelectedIds.has(id))
+    batchSelectedIds.delete(id)
+  else
+    batchSelectedIds.add(id)
+}
+
+function toggleSelectAll() {
+  if (batchSelectedIds.size === customActions.value.length) {
+    batchSelectedIds.clear()
+  }
+  else {
+    for (const a of customActions.value)
+      batchSelectedIds.add(a.id)
+  }
+}
+
+async function batchRemove() {
+  for (const id of batchSelectedIds) {
+    await animationActionsStore.removeCustomAction(id)
+    if (selectedAnimationId.value === id)
+      selectedAnimationId.value = 'idle_loop'
+  }
+  batchSelectedIds.clear()
+  batchSelectMode.value = false
+}
+
+function exitBatchMode() {
+  batchSelectMode.value = false
+  batchSelectedIds.clear()
 }
 
 onMounted(async () => {
@@ -149,17 +187,50 @@ onMounted(async () => {
 
         <!-- Animation List -->
         <div class="border border-neutral-300/40 rounded-2xl p-3 space-y-3 dark:border-neutral-700/40">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <div class="font-600">
               Animations
             </div>
-            <Button size="sm" icon="i-solar:add-circle-bold" label="Upload .vrma" @click="vrmaDialog.open()" />
+            <div class="flex items-center gap-2">
+              <template v-if="batchSelectMode">
+                <button
+                  :class="['rounded-lg px-2 py-1 text-xs transition-colors', 'bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700']"
+                  @click="toggleSelectAll"
+                >
+                  {{ batchSelectedIds.size === customActions.length ? 'Deselect All' : 'Select All' }}
+                </button>
+                <button
+                  :class="[
+                    'flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors',
+                    batchSelectedIds.size > 0
+                      ? 'bg-red-500/20 text-red-500 hover:bg-red-500/40'
+                      : 'bg-neutral-100 text-neutral-400 cursor-not-allowed dark:bg-neutral-800',
+                  ]"
+                  :disabled="batchSelectedIds.size === 0"
+                  @click="batchRemove"
+                >
+                  <div class="i-solar:trash-bin-trash-bold" />
+                  Delete ({{ batchSelectedIds.size }})
+                </button>
+                <button
+                  :class="['rounded-lg px-2 py-1 text-xs transition-colors', 'bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700']"
+                  @click="exitBatchMode"
+                >
+                  Cancel
+                </button>
+              </template>
+              <template v-else>
+                <Button size="sm" icon="i-solar:check-square-bold" label="Select" @click="batchSelectMode = true" />
+                <Button size="sm" icon="i-solar:add-circle-bold" label="Upload .vrma" @click="vrmaDialog.open()" />
+              </template>
+            </div>
           </div>
 
           <div class="overflow-x-auto border border-neutral-200 rounded-lg dark:border-neutral-700">
             <table class="w-full text-left text-sm">
               <thead class="bg-neutral-100 dark:bg-neutral-800">
                 <tr>
+                  <th v-if="batchSelectMode" class="w-10 px-2 py-2" />
                   <th class="px-4 py-2 font-medium">
                     Name
                   </th>
@@ -181,8 +252,22 @@ onMounted(async () => {
                       ? 'bg-primary-50 dark:bg-primary-900/20'
                       : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/50',
                   ]"
-                  @click="selectedAnimationId = anim.id"
+                  @click="batchSelectMode && !anim.isBuiltin ? toggleBatchSelect(anim.id) : (selectedAnimationId = anim.id)"
                 >
+                  <td v-if="batchSelectMode" class="w-10 px-2 py-2">
+                    <div
+                      :class="[
+                        'h-4 w-4 flex items-center justify-center rounded transition-colors',
+                        !anim.isBuiltin
+                          ? batchSelectedIds.has(anim.id)
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-neutral-200 dark:bg-neutral-700'
+                          : 'bg-neutral-100 dark:bg-neutral-800 cursor-not-allowed',
+                      ]"
+                    >
+                      <div v-if="batchSelectedIds.has(anim.id)" class="i-solar:check-read-bold text-xs" />
+                    </div>
+                  </td>
                   <td class="px-4 py-2">
                     <div class="flex items-center gap-2">
                       <div
