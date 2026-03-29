@@ -867,6 +867,11 @@ pages:
       change: 更换
       upload: 上传
       existing-file: （已有文件）
+    batch:
+      select: 选择
+      select-all: 全选
+      deselect-all: 取消全选
+      delete-count: '删除 ({count})'
     tooltips:
       disable: 禁用
       enable: 启用

@@ -5,7 +5,7 @@ import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/ani
 import { Button, FieldInput } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
@@ -193,6 +193,45 @@ const mediaFields = [
   },
 ]
 
+// ---- Batch select/delete ----
+const batchSelectMode = ref(false)
+const batchSelectedIds = ref(new Set<string>())
+
+const batchSelectableActions = computed(() =>
+  actions.value.filter(a => !a.isBuiltin),
+)
+
+function toggleBatchSelect(id: string) {
+  const next = new Set(batchSelectedIds.value)
+  if (next.has(id))
+    next.delete(id)
+  else
+    next.add(id)
+  batchSelectedIds.value = next
+}
+
+function toggleSelectAllActions() {
+  if (batchSelectedIds.value.size === batchSelectableActions.value.length) {
+    batchSelectedIds.value = new Set()
+  }
+  else {
+    batchSelectedIds.value = new Set(batchSelectableActions.value.map(a => a.id))
+  }
+}
+
+async function batchRemoveActions() {
+  for (const id of batchSelectedIds.value) {
+    await store.removeCustomAction(id)
+  }
+  batchSelectedIds.value = new Set()
+  batchSelectMode.value = false
+}
+
+function exitBatchMode() {
+  batchSelectMode.value = false
+  batchSelectedIds.value = new Set()
+}
+
 function previewAction(action: ActionEntry) {
   store.playAction(action.id)
   router.push('/devtools/vrma-player')
@@ -208,16 +247,53 @@ function formatDuration(ms?: number) {
 <template>
   <div class="flex flex-col gap-6 pb-12">
     <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div class="text-sm text-neutral-500 dark:text-neutral-400">
+    <div class="flex items-center justify-between gap-2">
+      <div class="min-w-0 flex-1 text-sm text-neutral-500 dark:text-neutral-400">
         {{ t('settings.pages.actions.description') }}
       </div>
-      <Button
-        size="sm"
-        icon="i-solar:add-circle-bold"
-        :label="t('settings.pages.actions.import-vrma')"
-        @click="vrmaDialog.open()"
-      />
+      <div class="flex shrink-0 items-center gap-2">
+        <template v-if="batchSelectMode">
+          <button
+            :class="['rounded-lg px-2 py-1 text-xs transition-colors', 'bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700']"
+            @click="toggleSelectAllActions"
+          >
+            {{ batchSelectedIds.size === batchSelectableActions.length ? t('settings.pages.actions.batch.deselect-all') : t('settings.pages.actions.batch.select-all') }}
+          </button>
+          <button
+            :class="[
+              'flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors',
+              batchSelectedIds.size > 0
+                ? 'bg-red-500/20 text-red-500 hover:bg-red-500/40'
+                : 'bg-neutral-100 text-neutral-400 cursor-not-allowed dark:bg-neutral-800',
+            ]"
+            :disabled="batchSelectedIds.size === 0"
+            @click="batchRemoveActions"
+          >
+            <div class="i-solar:trash-bin-trash-bold" />
+            {{ t('settings.pages.actions.batch.delete-count', { count: batchSelectedIds.size }) }}
+          </button>
+          <button
+            :class="['rounded-lg px-2 py-1 text-xs transition-colors', 'bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700']"
+            @click="exitBatchMode"
+          >
+            {{ t('settings.pages.actions.cancel') }}
+          </button>
+        </template>
+        <template v-else>
+          <Button
+            size="sm"
+            icon="i-solar:check-square-bold"
+            :label="t('settings.pages.actions.batch.select')"
+            @click="batchSelectMode = true"
+          />
+          <Button
+            size="sm"
+            icon="i-solar:add-circle-bold"
+            :label="t('settings.pages.actions.import-vrma')"
+            @click="vrmaDialog.open()"
+          />
+        </template>
+      </div>
     </div>
 
     <!-- Tag Groups -->
@@ -306,7 +382,24 @@ function formatDuration(ms?: number) {
         <!-- Collapsed row -->
         <template v-if="editingId !== action.id">
           <div class="flex items-center gap-3">
+            <!-- Batch selection checkbox -->
+            <button
+              v-if="batchSelectMode"
+              :class="[
+                'shrink-0 h-5 w-5 flex items-center justify-center rounded transition-colors',
+                !action.isBuiltin
+                  ? batchSelectedIds.has(action.id)
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600'
+                  : 'bg-neutral-100 text-neutral-300 cursor-not-allowed dark:bg-neutral-800 dark:text-neutral-600',
+              ]"
+              :disabled="action.isBuiltin"
+              @click.stop="!action.isBuiltin && toggleBatchSelect(action.id)"
+            >
+              <div v-if="batchSelectedIds.has(action.id)" class="i-solar:check-read-bold text-xs" />
+            </button>
             <div
+              v-else
               :class="[
                 'shrink-0 text-lg',
                 action.id === currentActionId

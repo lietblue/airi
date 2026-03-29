@@ -908,6 +908,11 @@ pages:
       thinking-use-speaking-actions-hint: >-
         When on, the thinking phase (before first token) picks from your speaking
         actions instead of always playing the built-in Thinking pose.
+    batch:
+      select: Select
+      select-all: Select All
+      deselect-all: Deselect All
+      delete-count: 'Delete ({count})'
     tooltips:
       disable: Disable
       enable: Enable

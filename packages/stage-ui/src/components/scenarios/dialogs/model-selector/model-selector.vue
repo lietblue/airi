@@ -5,7 +5,7 @@ import { Button } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger, EditableArea, EditableEditTrigger, EditableInput, EditablePreview, EditableRoot, EditableSubmitTrigger } from 'reka-ui'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import VrmBatchEditDialog from '../batch-import-edit/vrm-batch-edit-dialog.vue'
 
@@ -24,6 +24,44 @@ const { displayModelsFromIndexedDBLoading, displayModels } = storeToRefs(display
 
 function handleRemoveModel(model: DisplayModel) {
   displayModelStore.removeDisplayModel(model.id)
+}
+
+const batchSelectMode = ref(false)
+const batchSelectedIds = ref(new Set<string>())
+
+function toggleBatchSelect(id: string) {
+  const next = new Set(batchSelectedIds.value)
+  if (next.has(id))
+    next.delete(id)
+  else
+    next.add(id)
+  batchSelectedIds.value = next
+}
+
+const batchSelectableModels = computed(() =>
+  displayModels.value.filter(m => m.type === 'file'),
+)
+
+function toggleSelectAll() {
+  if (batchSelectedIds.value.size === batchSelectableModels.value.length) {
+    batchSelectedIds.value = new Set()
+  }
+  else {
+    batchSelectedIds.value = new Set(batchSelectableModels.value.map(m => m.id))
+  }
+}
+
+async function batchRemove() {
+  for (const id of batchSelectedIds.value) {
+    await displayModelStore.removeDisplayModel(id)
+  }
+  batchSelectedIds.value = new Set()
+  batchSelectMode.value = false
+}
+
+function exitBatchMode() {
+  batchSelectMode.value = false
+  batchSelectedIds.value = new Set()
 }
 
 const highlightDisplayModelCard = ref<string | undefined>(props.selectedModel?.id)
@@ -87,10 +125,47 @@ vrmDialog.onChange(handleAddVRMModel)
 
 <template>
   <div pt="4 sm:0" gap="4 sm:6" h-full flex flex-col>
-    <div flex items-center>
+    <div flex items-center gap-2>
       <div w-full flex-1 text-xl>
         Model Selector
       </div>
+      <!-- Batch select controls -->
+      <template v-if="batchSelectMode">
+        <button
+          :class="['rounded-lg px-2 py-1 text-sm transition-colors', 'bg-neutral-400/20 hover:bg-neutral-400/45 dark:bg-neutral-700/50 hover:dark:bg-neutral-700/65']"
+          @click="toggleSelectAll"
+        >
+          {{ batchSelectedIds.size === batchSelectableModels.length ? 'Deselect All' : 'Select All' }}
+        </button>
+        <button
+          :class="[
+            'flex items-center gap-1 rounded-lg px-2 py-1 text-sm transition-colors',
+            batchSelectedIds.size > 0
+              ? 'bg-red-500/20 text-red-500 hover:bg-red-500/40'
+              : 'bg-neutral-400/20 text-neutral-400 cursor-not-allowed',
+          ]"
+          :disabled="batchSelectedIds.size === 0"
+          @click="batchRemove"
+        >
+          <div i-solar:trash-bin-minimalistic-bold-duotone />
+          <div>Delete ({{ batchSelectedIds.size }})</div>
+        </button>
+        <button
+          :class="['rounded-lg px-2 py-1 text-sm transition-colors', 'bg-neutral-400/20 hover:bg-neutral-400/45 dark:bg-neutral-700/50 hover:dark:bg-neutral-700/65']"
+          @click="exitBatchMode"
+        >
+          Cancel
+        </button>
+      </template>
+      <template v-else>
+        <button
+          :class="['rounded-lg px-2 py-1 text-sm transition-colors flex items-center gap-1', 'bg-neutral-400/20 hover:bg-neutral-400/45 dark:bg-neutral-700/50 hover:dark:bg-neutral-700/65']"
+          @click="batchSelectMode = true"
+        >
+          <div i-solar:check-square-bold />
+          <div>Select</div>
+        </button>
+      </template>
       <div>
         <DropdownMenuRoot>
           <DropdownMenuTrigger
@@ -151,9 +226,24 @@ vrmDialog.onChange(handleAddVRMModel)
           v-auto-animate
           relative gap-2
           class="block h-full w-full md:flex md:flex-row"
-          @click="() => highlightDisplayModelCard = model.id"
+          @click="batchSelectMode && model.type === 'file' ? toggleBatchSelect(model.id) : (highlightDisplayModelCard = model.id)"
         >
-          <div absolute left-3 top-4 z-1>
+          <!-- Batch selection checkbox -->
+          <div v-if="batchSelectMode" absolute left-3 top-4 z-2>
+            <div
+              :class="[
+                'h-6 w-6 flex items-center justify-center rounded-md backdrop-blur-sm transition-colors',
+                model.type === 'file'
+                  ? batchSelectedIds.has(model.id)
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-neutral-900/30 text-white/60 hover:bg-neutral-900/50'
+                  : 'bg-neutral-900/10 text-white/20 cursor-not-allowed',
+              ]"
+            >
+              <div v-if="batchSelectedIds.has(model.id)" i-solar:check-read-bold text-sm />
+            </div>
+          </div>
+          <div v-else absolute left-3 top-4 z-1>
             <DropdownMenuRoot>
               <DropdownMenuTrigger
                 :class="[
