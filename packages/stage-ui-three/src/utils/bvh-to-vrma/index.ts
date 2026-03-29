@@ -26,6 +26,38 @@ export { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
 const BONE_NAME_RE = /\.bones\[(.*)\]/
 
 /**
+ * Detect if a position track uses a mixed format where the first frame stores
+ * absolute position but subsequent frames store small deltas (relative offsets).
+ *
+ * NOTICE: Some BVH exporters produce this non-standard layout — frame 1 has
+ * the absolute hips position (≈ OFFSET) while frame 2+ drops to near-zero
+ * because they represent incremental movement. We detect this by checking if
+ * the Y value between frame 0 and frame 1 drops by more than 50% of frame 0's
+ * magnitude, and frame 1's Y is close to zero.
+ */
+function detectDeltaFrames(values: Float32Array): boolean {
+  if (values.length < 6)
+    return false
+  const y0 = values[1]
+  const y1 = values[4]
+  // First frame has significant Y (standing height), second frame is near zero
+  return Math.abs(y0) > 1 && Math.abs(y1) < Math.abs(y0) * 0.1
+}
+
+/**
+ * Convert a delta-frame position track to absolute positions by accumulating
+ * deltas on top of the first frame's absolute position.
+ */
+function accumulateDeltaFrames(values: Float32Array): void {
+  // Frame 0 is already absolute; accumulate from frame 1 onward
+  for (let i = 3; i < values.length; i += 3) {
+    values[i] = values[i - 3] + values[i]
+    values[i + 1] = values[i - 2] + values[i + 1]
+    values[i + 2] = values[i - 1] + values[i + 2]
+  }
+}
+
+/**
  * Controls how the hips position (root motion) is handled during conversion.
  * - `'keep'`    — Preserve full hips position track (all axes). Use for animations with
  *                 intentional root movement (walks, jumps).
@@ -86,21 +118,25 @@ export async function convertBVHToVRMA(
       const scaled = track.clone()
       scaled.values = Float32Array.from(track.values, v => v * scale)
 
+      // NOTICE: Some BVH exporters write frame 0 as absolute position and
+      // frame 1+ as incremental deltas. Detect and fix by accumulating.
+      if (detectDeltaFrames(scaled.values))
+        accumulateDeltaFrames(scaled.values)
+
+      // Subtract hips rest-pose offset so values become relative to rest.
+      // NOTICE: This matches the original vrm-c/bvh2vrma approach. The playback
+      // pipeline (reAnchorRootPositionTrack) re-anchors these relative values
+      // to the target VRM model's hips position.
+      const offset = hipsBone.position.toArray()
+      for (let j = 0; j < scaled.values.length; j++)
+        scaled.values[j] -= offset[j % 3]
+
+      // Apply root motion mode on the already-relative values
       if (rootMotion === 'y-only') {
-        // NOTICE: Use the hips rest-pose position as the base, then add only
-        // relative Y delta from the first BVH frame. This ensures the first
-        // frame exactly matches the skeleton rest pose, which is what
-        // createVRMAnimationClip and reAnchorRootPositionTrack both expect.
-        // Absolute BVH Y values would mismatch the VRM model and cause falling.
-        const restX = hipsBone.position.x
-        const restY = hipsBone.position.y
-        const restZ = hipsBone.position.z
-        const firstY = scaled.values[1]
+        // Lock X and Z to 0 (rest), keep only relative Y bob
         for (let i = 0; i < scaled.values.length; i += 3) {
-          const relativeY = scaled.values[i + 1] - firstY
-          scaled.values[i] = restX
-          scaled.values[i + 1] = restY + relativeY
-          scaled.values[i + 2] = restZ
+          scaled.values[i] = 0
+          scaled.values[i + 2] = 0
         }
       }
 
@@ -109,11 +145,6 @@ export async function convertBVHToVRMA(
   }
 
   clip.tracks = filteredTracks
-
-  // NOTICE: Do NOT subtract the hips rest-pose offset from the position track.
-  // The playback pipeline (reAnchorRootPositionTrack) expects absolute position
-  // values and re-anchors them to the target VRM model. Subtracting the rest
-  // offset here would double-correct and cause the character to drop to y=0.
 
   // Export GLB with VRMC_vrm_animation extension
   const exporter = new GLTFExporter()
