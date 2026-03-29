@@ -171,12 +171,13 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       if (shouldAbort())
         return
 
-      const sessionMessagesForSend = chatSession.sessionMessages[sessionId]
-      if (!sessionMessagesForSend) {
-        throw new Error('Session messages not found')
-      }
-      sessionMessagesForSend.push({ role: 'user', content: finalContent, createdAt: sendingCreatedAt, id: nanoid() })
-      chatSession.persistSessionMessages(sessionId)
+      chatSession.appendSessionMessage(sessionId, {
+        role: 'user',
+        content: finalContent,
+        createdAt: sendingCreatedAt,
+        id: nanoid(),
+      })
+      const sessionMessagesForSend = chatSession.getSessionMessages(sessionId)
 
       const categorizer = createStreamingCategorizer(activeProvider.value)
       let streamPosition = 0
@@ -332,8 +333,7 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
       await parser.end()
 
       if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
-        sessionMessagesForSend.push(toRaw(buildingMessage))
-        chatSession.persistSessionMessages(sessionId)
+        chatSession.appendSessionMessage(sessionId, toRaw(buildingMessage))
       }
 
       await hooks.emitStreamEndHooks(streamingMessageContext)

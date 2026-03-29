@@ -24,6 +24,7 @@ import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { useDelayMessageQueue, useEmotionsMessageQueue } from '../../composables/queues'
+import { useAuthProviderSync } from '../../composables/use-auth-provider-sync'
 import { llmInferenceEndToken } from '../../constants'
 import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
@@ -92,6 +93,7 @@ const chatHookCleanups: Array<() => void> = []
 //             cross-window broadcast wiring.
 
 const providersStore = useProvidersStore()
+useAuthProviderSync()
 const live2dStore = useLive2d()
 const showStage = ref(true)
 const viewUpdateCleanups: Array<() => void> = []
