@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { convertBVHToVRMA } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
-import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
+import type { RootMotionMode } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
+
+import { BVHLoader, convertBVHToVRMA } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
+import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 import { computed, ref } from 'vue'
 
 interface ConversionItem {
@@ -8,11 +10,16 @@ interface ConversionItem {
   status: 'pending' | 'converting' | 'done' | 'error'
   error?: string
   blob?: Blob
+  imported?: boolean
 }
+
+const animationActionsStore = useAnimationActionsStore()
 
 const items = ref<ConversionItem[]>([])
 const isDragging = ref(false)
 const scale = ref(0.01)
+const rootMotion = ref<RootMotionMode>('y-only')
+const importing = ref(false)
 
 const bvhLoader = new BVHLoader()
 const BVH_EXT_RE = /\.bvh$/i
@@ -59,7 +66,7 @@ async function convertAll(files: File[]) {
     try {
       const text = await file.text()
       const bvh = bvhLoader.parse(text)
-      const buffer = await convertBVHToVRMA(bvh, { scale: scale.value })
+      const buffer = await convertBVHToVRMA(bvh, { scale: scale.value, rootMotion: rootMotion.value })
       item.blob = new Blob([buffer], { type: 'model/gltf-binary' })
       item.status = 'done'
     }
@@ -117,28 +124,73 @@ function clearAll() {
   items.value = []
 }
 
+async function importSingle(item: ConversionItem) {
+  if (!item.blob || item.imported)
+    return
+  const vrmaName = item.name.replace(BVH_EXT_RE, '.vrma')
+  const file = new File([item.blob], vrmaName, { type: 'model/gltf-binary' })
+  const baseName = item.name.replace(BVH_EXT_RE, '')
+  await animationActionsStore.addCustomAction(file, baseName, `Imported from BVH: ${item.name}`)
+  item.imported = true
+}
+
+async function importAll() {
+  const importable = items.value.filter(i => i.status === 'done' && i.blob && !i.imported)
+  if (importable.length === 0)
+    return
+  importing.value = true
+  for (const item of importable)
+    await importSingle(item)
+  importing.value = false
+}
+
 const doneCount = computed(() => items.value.filter(i => i.status === 'done').length)
+const importableCount = computed(() => items.value.filter(i => i.status === 'done' && i.blob && !i.imported).length)
 const errorCount = computed(() => items.value.filter(i => i.status === 'error').length)
 </script>
 
 <template>
   <div :class="['flex flex-col gap-4', 'p-4']">
-    <!-- Scale option -->
-    <div :class="['flex items-center gap-2', 'text-sm']">
-      <label for="bvh-scale">Scale</label>
-      <input
-        id="bvh-scale"
-        v-model.number="scale"
-        type="number"
-        step="0.001"
-        min="0.001"
-        :class="[
-          'w-24 rounded border px-2 py-1',
-          'border-neutral-300 dark:border-neutral-600',
-          'bg-white dark:bg-neutral-800',
-        ]"
-      >
-      <span :class="['text-neutral-500']">BVH usually uses cm (0.01) or m (1.0)</span>
+    <!-- Options -->
+    <div :class="['flex flex-wrap items-center gap-4', 'text-sm']">
+      <div :class="['flex items-center gap-2']">
+        <label for="bvh-scale">Scale</label>
+        <input
+          id="bvh-scale"
+          v-model.number="scale"
+          type="number"
+          step="0.001"
+          min="0.001"
+          :class="[
+            'w-24 rounded border px-2 py-1',
+            'border-neutral-300 dark:border-neutral-600',
+            'bg-white dark:bg-neutral-800',
+          ]"
+        >
+        <span :class="['text-neutral-500']">cm → 0.01, m → 1.0</span>
+      </div>
+      <div :class="['flex items-center gap-2']">
+        <label for="bvh-root-motion">Root Motion</label>
+        <select
+          id="bvh-root-motion"
+          v-model="rootMotion"
+          :class="[
+            'rounded border px-2 py-1',
+            'border-neutral-300 dark:border-neutral-600',
+            'bg-white dark:bg-neutral-800',
+          ]"
+        >
+          <option value="y-only">
+            Y only (strip XZ drift)
+          </option>
+          <option value="strip">
+            Strip all (rotation only)
+          </option>
+          <option value="keep">
+            Keep full motion
+          </option>
+        </select>
+      </div>
     </div>
 
     <!-- Drop zone -->
@@ -184,6 +236,18 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
         </template>
       </span>
       <div :class="['flex gap-2']">
+        <button
+          :class="[
+            'rounded px-3 py-1 text-sm',
+            'bg-green-500 text-white',
+            'hover:bg-green-600',
+            'disabled:opacity-40 disabled:cursor-not-allowed',
+          ]"
+          :disabled="importableCount === 0 || importing"
+          @click="importAll"
+        >
+          {{ importing ? 'Importing...' : `Import All (${importableCount})` }}
+        </button>
         <button
           :class="[
             'rounded px-3 py-1 text-sm',
@@ -246,6 +310,23 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
         </span>
 
         <!-- Actions -->
+        <button
+          v-if="item.status === 'done' && !item.imported"
+          :class="[
+            'rounded px-2 py-0.5 text-xs',
+            'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+            'hover:bg-green-200 dark:hover:bg-green-900/50',
+          ]"
+          @click="importSingle(item)"
+        >
+          Import
+        </button>
+        <span
+          v-if="item.imported"
+          :class="['text-xs text-green-600 dark:text-green-400']"
+        >
+          Imported
+        </span>
         <button
           v-if="item.status === 'done'"
           :class="[
