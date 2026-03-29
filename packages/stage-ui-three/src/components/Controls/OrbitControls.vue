@@ -7,7 +7,7 @@
 import type { Vec3 } from '../../stores/model-store'
 
 import { extend, useTres } from '@tresjs/core'
-import { until } from '@vueuse/core'
+import { until, useThrottleFn } from '@vueuse/core'
 import {
   MOUSE,
   PerspectiveCamera,
@@ -131,8 +131,8 @@ function registerInfoFlow() {
     * Upward info flow
     * - Emit info => update pinia store
   */
-  // send camera update info
-  const onChange = () => {
+  // send camera update info (throttled to ~30Hz to avoid reactive system storm during drag)
+  const onChange = useThrottleFn(() => {
     if (!controlEnable.value || !camera.value || !controls.value)
       return
 
@@ -147,7 +147,7 @@ function registerInfoFlow() {
         newCameraDistance: controls.value.getDistance(),
       },
     )
-  }
+  }, 33)
 
   disposeControlsChange?.()
   controls.value?.addEventListener('change', onChange)
