@@ -11,6 +11,7 @@ import { useContextBridgeStore } from '@proj-airi/stage-ui/stores/mods/api/conte
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
 import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-vision'
+import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { usePresenceStore } from '@proj-airi/stage-ui/stores/modules/presence'
 import { useVisionProcessingStore } from '@proj-airi/stage-ui/stores/modules/vision'
 import { useOnboardingStore } from '@proj-airi/stage-ui/stores/onboarding'
@@ -70,6 +71,8 @@ watch(() => presenceStore.pendingWelcome, async (msg) => {
 const speakingStore = useSpeakingStore()
 const chatOrchestrator = useChatOrchestratorStore()
 
+const hearingStore = useHearingStore()
+
 // NOTICE: autoAsrActivatedMic is set only when we programmatically enable the mic via
 // pendingAutoAsr consumption. This avoids false positives when the user manually toggles
 // the microphone while autoAsrAfterMessage is enabled.
@@ -111,6 +114,8 @@ watch(() => handVisionStore.pendingMessage, async (msg) => {
     if (handVisionStore.pendingAutoAsr && !speakingStore.nowSpeaking) {
       handVisionStore.pendingAutoAsr = false
       autoAsrActivatedMic = true
+      hearingStore.autoSendEnabled = true
+      hearingStore.autoSendOnce = true
       if (!settingsAudioDeviceStore.enabled)
         settingsAudioDeviceStore.enabled = true
     }
@@ -134,6 +139,8 @@ watch(
     if (wasSpeaking && !speaking && handVisionStore.pendingAutoAsr) {
       handVisionStore.pendingAutoAsr = false
       autoAsrActivatedMic = true
+      hearingStore.autoSendEnabled = true
+      hearingStore.autoSendOnce = true
       if (!settingsAudioDeviceStore.enabled) {
         settingsAudioDeviceStore.enabled = true
       }

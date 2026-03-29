@@ -43,7 +43,7 @@ const hearingStore = useHearingStore()
 const hearingPipeline = useHearingSpeechInputPipeline()
 const { transcribeForMediaStream, stopStreamingTranscription } = hearingPipeline
 const { supportsStreamInput } = storeToRefs(hearingPipeline)
-const { configured: hearingConfigured, autoSendEnabled, autoSendDelay } = storeToRefs(hearingStore)
+const { configured: hearingConfigured, autoSendEnabled, autoSendDelay, autoSendOnce } = storeToRefs(hearingStore)
 const shouldUseStreamInput = computed(() => supportsStreamInput.value && !!stream.value)
 
 // Auto-send logic
@@ -93,6 +93,13 @@ async function debouncedAutoSend(text: string) {
         // Clear the message input after sending
         messageInput.value = ''
         pendingAutoSendText.value = ''
+
+        // One-shot mode: disable auto-send after first successful send
+        if (autoSendOnce.value) {
+          autoSendOnce.value = false
+          autoSendEnabled.value = false
+          console.info('[ChatArea] One-shot auto-send completed, auto-send disabled')
+        }
       }
       catch (err) {
         console.error('[ChatArea] Auto-send error:', err)
@@ -344,6 +351,13 @@ async function stopListening() {
           providerConfig,
         })
         messageInput.value = ''
+
+        // One-shot mode: disable auto-send after first successful send
+        if (autoSendOnce.value) {
+          autoSendOnce.value = false
+          autoSendEnabled.value = false
+          console.info('[ChatArea] One-shot auto-send completed on stop, auto-send disabled')
+        }
       }
       catch (err) {
         console.error('[ChatArea] Auto-send error on stop:', err)
