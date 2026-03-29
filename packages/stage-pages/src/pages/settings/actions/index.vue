@@ -12,7 +12,7 @@ import { useRouter } from 'vue-router'
 const { t } = useI18n()
 const router = useRouter()
 const store = useAnimationActionsStore()
-const { actions, currentActionId, thinkingUseSpeakingActions, allTags, idlePoolTag, speakingPoolTag, loopTag } = storeToRefs(store)
+const { actions, currentActionId, thinkingUseSpeakingActions, allTags, idlePoolTag, speakingPoolTag } = storeToRefs(store)
 
 function toggleThinkingMode() {
   thinkingUseSpeakingActions.value = !thinkingUseSpeakingActions.value
@@ -23,6 +23,7 @@ function toggleThinkingMode() {
 const editingId = ref<string | null>(null)
 const editName = ref('')
 const editDescription = ref('')
+const editLoop = ref(false)
 const editTags = ref<string[]>([])
 const newTagInput = ref('')
 // pending files for the current edit session (null = clear, undefined = unchanged)
@@ -38,6 +39,7 @@ function startEdit(action: ActionEntry) {
   editingId.value = action.id
   editName.value = action.name
   editDescription.value = action.description
+  editLoop.value = action.loop
   editTags.value = [...(action.tags ?? [])]
   editBgMusicFile.value = undefined
   editBgVideoFile.value = undefined
@@ -104,6 +106,7 @@ async function saveEdit() {
   const patch: Parameters<typeof store.updateAction>[1] = {
     name: editName.value,
     description: editDescription.value,
+    loop: editLoop.value,
     tags: editTags.value,
   }
   if (editBgMusicFile.value !== undefined)
@@ -226,7 +229,6 @@ function formatDuration(ms?: number) {
         v-for="group in [
           { key: 'idle', model: idlePoolTag, label: t('settings.pages.actions.tag-groups.idle-tag'), desc: t('settings.pages.actions.tag-groups.idle-tag-description') },
           { key: 'speaking', model: speakingPoolTag, label: t('settings.pages.actions.tag-groups.speaking-tag'), desc: t('settings.pages.actions.tag-groups.speaking-tag-description') },
-          { key: 'loop', model: loopTag, label: t('settings.pages.actions.tag-groups.loop-tag'), desc: t('settings.pages.actions.tag-groups.loop-tag-description') },
         ]"
         :key="group.key"
         :class="['flex', 'flex-col', 'gap-1']"
@@ -347,6 +349,13 @@ function formatDuration(ms?: number) {
                   <div class="i-solar:videocamera-record-bold text-xs" />
                   {{ t('settings.pages.actions.badges.video') }}
                 </span>
+                <span
+                  v-if="action.loop"
+                  class="inline-flex items-center gap-0.5 rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
+                >
+                  <div class="i-solar:repeat-bold text-xs" />
+                  {{ t('settings.pages.actions.badges.loop') }}
+                </span>
                 <!-- All tags displayed as chips -->
                 <span
                   v-for="tag in action.tags"
@@ -357,9 +366,7 @@ function formatDuration(ms?: number) {
                       ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300'
                       : tag === speakingPoolTag
                         ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300'
-                        : tag === loopTag
-                          ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'
-                          : 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300',
+                        : 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300',
                   ]"
                 >
                   {{ tag }}
@@ -418,6 +425,23 @@ function formatDuration(ms?: number) {
             </div>
             <FieldInput v-model="editName" :label="t('settings.pages.actions.form.name')" :placeholder="t('settings.pages.actions.form.name-placeholder')" />
             <FieldInput v-model="editDescription" :label="t('settings.pages.actions.form.description')" :placeholder="t('settings.pages.actions.form.description-placeholder')" />
+
+            <!-- Loop toggle -->
+            <label :class="['flex', 'cursor-pointer', 'select-none', 'items-center', 'gap-3']">
+              <input
+                v-model="editLoop"
+                type="checkbox"
+                :class="['rounded', 'accent-indigo-500']"
+              >
+              <div>
+                <div :class="['text-sm', 'text-neutral-700', 'dark:text-neutral-300']">
+                  {{ t('settings.pages.actions.edit.loop-toggle') }}
+                </div>
+                <div :class="['text-xs', 'text-neutral-400']">
+                  {{ t('settings.pages.actions.edit.loop-toggle-hint') }}
+                </div>
+              </div>
+            </label>
 
             <!-- Tags -->
             <div :class="['border', 'border-neutral-200', 'rounded-xl', 'p-3', 'space-y-2', 'dark:border-neutral-700']">

@@ -878,20 +878,21 @@ pages:
       custom: Custom
       music: Music
       video: Video
+      loop: Loop
     edit:
       title: 'Editing: {name}'
       tags: Tags
       tags-empty: No tags assigned
       tags-placeholder: Add tag…
       tags-add: Add
+      loop-toggle: Loop continuously
+      loop-toggle-hint: When enabled, this animation repeats instead of playing once
     tag-groups:
       title: Tag Groups
       idle-tag: Idle Pool Tag
       idle-tag-description: Actions tagged with this name are eligible for random idle rotation
       speaking-tag: Speaking Pool Tag
       speaking-tag-description: Actions tagged with this name are cycled while AIRI is talking
-      loop-tag: Loop Tag
-      loop-tag-description: Actions tagged with this name loop continuously; others play once then return to idle
     media:
       title: Background Media
       bg-music: Background Music

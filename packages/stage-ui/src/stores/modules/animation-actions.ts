@@ -24,10 +24,12 @@ export interface ActionEntry {
   fgVideoUrl?: string
   enabled: boolean
   importedAt: number
+  /** Whether the animation loops continuously (LoopRepeat) or plays once (LoopOnce). */
+  loop: boolean
   /**
    * User-defined tag names for pool binding. Actions can belong to multiple pools;
-   * pool roles (idle, speaking, loop, etc.) are configured via tag group names in settings.
-   * e.g. tags: ['idle', 'loop'] means this action participates in the idle and loop pools.
+   * pool roles (idle, speaking, etc.) are configured via tag group names in settings.
+   * e.g. tags: ['idle'] means this action participates in the idle pool.
    */
   tags: string[]
 }
@@ -57,6 +59,7 @@ interface SpeakingSettings {
 
 type BuiltinOverrides = Record<string, {
   enabled?: boolean
+  loop?: boolean
   tags?: string[]
 }>
 
@@ -84,10 +87,11 @@ interface StoredCustomAction {
   fgVideoUrl?: string
   enabled: boolean
   importedAt: number
-  tags?: string[]
-  // Legacy fields — migrated to tags on load, then removed from storage
-  isIdle?: boolean
+  /** Whether the animation loops continuously. */
   loop?: boolean
+  tags?: string[]
+  // Legacy fields — migrated on load, then removed from storage
+  isIdle?: boolean
   isSpeakingAction?: boolean
 }
 
@@ -97,6 +101,7 @@ const BUILTIN_DEFAULTS = {
   durationMs: undefined as number | undefined,
   enabled: true,
   importedAt: 0,
+  loop: false,
   tags: [] as string[],
 }
 
@@ -105,9 +110,10 @@ const builtinActionSources: Array<{
   name: string
   description: string
   url: URL
+  loop?: boolean
   tags?: string[]
 }> = [
-  { id: 'idle_loop', name: 'Idle', description: 'Idle standing animation, loops continuously', url: animations.idleLoop, tags: ['idle', 'loop'] },
+  { id: 'idle_loop', name: 'Idle', description: 'Idle standing animation, loops continuously', url: animations.idleLoop, loop: true, tags: ['idle'] },
   { id: 'relax', name: 'Relax', description: 'Relaxed, casual resting pose', url: animations.relax },
   { id: 'thinking', name: 'Thinking', description: 'Thoughtful, pondering pose', url: animations.thinking },
   { id: 'clapping', name: 'Clapping', description: 'Clapping with both hands enthusiastically', url: animations.clapping },
@@ -124,6 +130,7 @@ const builtinActionSources: Array<{
 const builtinActions: ActionEntry[] = builtinActionSources.map(({ url, ...src }) => ({
   ...BUILTIN_DEFAULTS,
   ...src,
+  loop: src.loop ?? false,
   tags: src.tags ?? [],
   vrmaUrl: url.toString(),
 }))
@@ -164,11 +171,6 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
    * Actions tagged with this name are cycled while AIRI is outputting text.
    */
   const speakingPoolTag = useLocalStorage('settings/actions/speaking-tag', 'speaking')
-  /**
-   * Tag name whose matching actions loop continuously.
-   * Actions tagged with this name use Three.js LoopRepeat; others use LoopOnce.
-   */
-  const loopTag = useLocalStorage('settings/actions/loop-tag', 'loop')
 
   /** All unique tag names across all actions. */
   const allTags = computed(() => [...new Set(actions.value.flatMap(a => a.tags))])
@@ -179,7 +181,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
 
   /** Whether the currently playing action should loop. Defaults true when no action is active. */
   const isCurrentActionLoop = computed(() =>
-    currentAction.value?.tags.includes(loopTag.value) ?? true,
+    currentAction.value?.loop ?? true,
   )
 
   /** Whether the currently playing action is in the idle pool. */
@@ -257,20 +259,20 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       const legacyOverrides = await localforage.getItem<Record<string, unknown>>(BUILTIN_OVERRIDES_KEY_LEGACY)
       if (legacyOverrides) {
         const existing = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
-        // Merge legacy into existing, converting old boolean fields to tags
+        // Merge legacy into existing, converting old boolean fields
         const merged: BuiltinOverrides = { ...existing }
         for (const [id, override] of Object.entries(legacyOverrides)) {
           const o = override as Record<string, unknown>
-          const tags = [...((merged[id]?.tags ?? (o.tags as string[] | undefined)) ?? [])]
+          const tags = [...((merged[id]?.tags ?? (o.tags as string[] | undefined)) ?? [])].filter(t => t !== 'loop')
           if (o.isIdle && !tags.includes(idlePoolTag.value))
             tags.push(idlePoolTag.value)
           if (o.isSpeakingAction && !tags.includes(speakingPoolTag.value))
             tags.push(speakingPoolTag.value)
-          if (o.loop && !tags.includes(loopTag.value))
-            tags.push(loopTag.value)
+          const loop = !!(o.loop || merged[id]?.loop)
           merged[id] = {
             ...merged[id],
             ...(o.enabled !== undefined ? { enabled: o.enabled as boolean } : {}),
+            loop,
             tags,
           }
         }
@@ -282,13 +284,15 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       if (speakingSettings)
         thinkingUseSpeakingActions.value = speakingSettings.thinkingUseSpeakingActions
 
-      // Migrate builtin overrides: convert old boolean fields to tags
+      // Migrate builtin overrides: convert old boolean fields and strip 'loop' from tags
       const rawBuiltinOverrides = await localforage.getItem<Record<string, Record<string, unknown>>>(BUILTIN_OVERRIDES_KEY) ?? {}
       let builtinOverridesDirty = false
       const builtinOverrides: BuiltinOverrides = {}
       for (const [id, o] of Object.entries(rawBuiltinOverrides)) {
-        const tags = [...((o.tags as string[] | undefined) ?? [])]
-        let migrated = false
+        const rawTags = (o.tags as string[] | undefined) ?? []
+        const hadLoopTag = rawTags.includes('loop')
+        const tags = rawTags.filter(t => t !== 'loop')
+        let migrated = hadLoopTag
         if (o.isIdle && !tags.includes(idlePoolTag.value)) {
           tags.push(idlePoolTag.value)
           migrated = true
@@ -297,12 +301,11 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           tags.push(speakingPoolTag.value)
           migrated = true
         }
-        if (o.loop && !tags.includes(loopTag.value)) {
-          tags.push(loopTag.value)
-          migrated = true
-        }
+        // Derive loop from the old boolean field or from the presence of the 'loop' tag
+        const loop = !!(o.loop || hadLoopTag)
         builtinOverrides[id] = {
           ...(o.enabled !== undefined ? { enabled: o.enabled as boolean } : {}),
+          loop,
           tags,
         }
         if (migrated)
@@ -310,6 +313,8 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       }
       if (builtinOverridesDirty)
         await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, builtinOverrides)
+      // Clean up orphaned localStorage key from the old loopTag setting
+      localStorage.removeItem('settings/actions/loop-tag')
 
       const customEntries: ActionEntry[] = []
 
@@ -320,9 +325,12 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         if (!(val.file instanceof File))
           return
 
-        // Migrate legacy boolean fields to tags
-        const tags = [...(val.tags ?? [])]
-        let needsMigration = false
+        // Migrate legacy boolean fields to tags, and extract loop as a direct property
+        const rawTags = [...(val.tags ?? [])]
+        const hadLoopTag = rawTags.includes('loop')
+        const tags = rawTags.filter(t => t !== 'loop')
+        const loop = !!(val.loop || hadLoopTag)
+        let needsMigration = hadLoopTag
         if (val.isIdle && !tags.includes(idlePoolTag.value)) {
           tags.push(idlePoolTag.value)
           needsMigration = true
@@ -331,13 +339,9 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           tags.push(speakingPoolTag.value)
           needsMigration = true
         }
-        if (val.loop && !tags.includes(loopTag.value)) {
-          tags.push(loopTag.value)
-          needsMigration = true
-        }
-        if (needsMigration) {
-          const { isIdle: _isIdle, isSpeakingAction: _isSpeakingAction, loop: _loop, ...rest } = val
-          await localforage.setItem(key, { ...rest, tags })
+        if (needsMigration || val.loop !== undefined) {
+          const { isIdle: _isIdle, isSpeakingAction: _isSpeakingAction, ...rest } = val
+          await localforage.setItem(key, { ...rest, loop, tags })
             .catch(err => console.error('[animation-actions] failed to migrate legacy fields for', val.id, err))
         }
 
@@ -368,6 +372,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           fgVideoUrl,
           enabled: val.enabled,
           importedAt: val.importedAt,
+          loop,
           tags,
         })
       })
@@ -381,6 +386,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
           return {
             ...a,
             ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
+            loop: override.loop ?? a.loop,
             // Merge override tags onto the builtin's default tags (union)
             tags: [...new Set([...a.tags, ...(override.tags ?? [])])],
           }
@@ -414,6 +420,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       durationMs,
       enabled: true,
       importedAt,
+      loop: false,
       tags: [],
     }
 
@@ -425,6 +432,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       durationMs,
       enabled: true,
       importedAt,
+      loop: false,
       tags: [],
     }
 
@@ -454,6 +462,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     name?: string
     description?: string
     enabled?: boolean
+    loop?: boolean
     tags?: string[]
     /** Pass a File to upload; pass null to clear; omit to keep existing */
     bgMusicFile?: File | null
@@ -497,6 +506,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       name: patch.name ?? existing.name,
       description: patch.description ?? existing.description,
       enabled: patch.enabled ?? existing.enabled,
+      loop: patch.loop ?? existing.loop,
       tags: patch.tags ?? existing.tags,
       bgMusicUrl,
       bgVideoUrl,
@@ -509,6 +519,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       overrides[id] = {
         ...overrides[id],
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.loop !== undefined ? { loop: patch.loop } : {}),
         // For builtins, store only the delta from the builtin's default tags
         ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
       }
@@ -527,6 +538,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         name: patch.name ?? stored.name,
         description: patch.description ?? stored.description,
         enabled: patch.enabled ?? stored.enabled,
+        loop: patch.loop ?? stored.loop,
         tags: patch.tags ?? stored.tags,
         bgMusicFile: 'bgMusicFile' in patch ? (patch.bgMusicFile ?? undefined) : stored.bgMusicFile,
         bgVideoFile: 'bgVideoFile' in patch ? (patch.bgVideoFile ?? undefined) : stored.bgVideoFile,
@@ -578,7 +590,6 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     thinkingUseSpeakingActions,
     idlePoolTag,
     speakingPoolTag,
-    loopTag,
     allTags,
     isCurrentActionLoop,
     isCurrentActionIdle,

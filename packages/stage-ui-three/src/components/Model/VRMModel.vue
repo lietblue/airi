@@ -32,6 +32,7 @@ import {
   AnimationMixer,
   Box3,
   LoopOnce,
+  LoopRepeat,
   MathUtils,
   Mesh,
   MeshPhysicalMaterial,
@@ -728,6 +729,10 @@ async function loadModel() {
       clipAction.clampWhenFinished = true
       nextVrmAnimationMixer.addEventListener('finished', onAnimationFinished)
     }
+    else {
+      clipAction.setLoop(LoopRepeat, Infinity)
+      clipAction.clampWhenFinished = false
+    }
     clipAction.play()
     currentAnimationAction.value = clipAction
 
@@ -860,6 +865,10 @@ async function reloadAnimation() {
       newAction.clampWhenFinished = true
       mixer.addEventListener('finished', onAnimationFinished)
     }
+    else {
+      newAction.setLoop(LoopRepeat, Infinity)
+      newAction.clampWhenFinished = false
+    }
 
     const prevAction = currentAnimationAction.value
     if (prevAction && prevAction !== newAction) {
@@ -896,6 +905,25 @@ onMounted(async () => {
   watch(idleAnimation, (newUrl, oldUrl) => {
     if (newUrl !== oldUrl) {
       reloadAnimation()
+    }
+  })
+
+  // Watch loop prop changes to update the currently playing animation's loop mode
+  watch(loop, (newLoop) => {
+    const action = currentAnimationAction.value
+    const mixer = vrmAnimationMixer.value
+    if (!action || !mixer)
+      return
+
+    mixer.removeEventListener('finished', onAnimationFinished)
+    if (newLoop) {
+      action.setLoop(LoopRepeat, Infinity)
+      action.clampWhenFinished = false
+    }
+    else {
+      action.setLoop(LoopOnce, 1)
+      action.clampWhenFinished = true
+      mixer.addEventListener('finished', onAnimationFinished)
     }
   })
 
