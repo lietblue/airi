@@ -40,8 +40,11 @@ function detectDeltaFrames(values: Float32Array): boolean {
     return false
   const y0 = values[1]
   const y1 = values[4]
-  // First frame has significant Y (standing height), second frame is near zero
-  return Math.abs(y0) > 1 && Math.abs(y1) < Math.abs(y0) * 0.1
+  // First frame has a meaningful standing-height Y and second frame's Y drops
+  // to < 10% of it — strong signal of delta encoding. The ratio-based check
+  // works regardless of scale (cm, m, etc.). The y0 != 0 guard avoids division
+  // edge cases when the first frame is exactly at origin.
+  return y0 !== 0 && Math.abs(y1) < Math.abs(y0) * 0.1
 }
 
 /**
