@@ -47,9 +47,17 @@ export async function clipFromVRMAnimation(vrm?: VRMCore, animation?: VRMAnimati
   return createVRMAnimationClip(animation, vrm)
 }
 
+/**
+ * Maximum allowed deviation (in meters) from the VRM model's rest hips position.
+ * Any frame whose hips position exceeds this threshold after re-anchoring will be
+ * clamped back to the rest position on that axis. This catches outlier frames
+ * produced by non-standard BVH exports (delta-encoded frame 0, etc.).
+ */
+const MAX_HIP_DEVIATION = 0.5
+
 // Set initial positions for animation
 export function reAnchorRootPositionTrack(clip: AnimationClip, _vrm: VRMCore) {
-// Get the hips node to re-anchor the root position track
+  // Get the hips node to re-anchor the root position track
   const hipNode = _vrm.humanoid?.getNormalizedBoneNode('hips')
   if (!hipNode) {
     console.warn('No hips node found in VRM model.')
@@ -82,6 +90,21 @@ export function reAnchorRootPositionTrack(clip: AnimationClip, _vrm: VRMCore) {
         track.values[i] -= animeDelta.x
         track.values[i + 1] -= animeDelta.y
         track.values[i + 2] -= animeDelta.z
+      }
+
+      // Clamp outlier frames: if any frame deviates too far from the rest
+      // hips position, snap it back. This is a safety net for broken BVH data
+      // where individual frames have wildly wrong position values.
+      for (let i = 0; i < track.values.length; i += 3) {
+        const dx = track.values[i] - defaultHipPos.x
+        const dy = track.values[i + 1] - defaultHipPos.y
+        const dz = track.values[i + 2] - defaultHipPos.z
+        if (Math.abs(dx) > MAX_HIP_DEVIATION)
+          track.values[i] = defaultHipPos.x
+        if (Math.abs(dy) > MAX_HIP_DEVIATION)
+          track.values[i + 1] = defaultHipPos.y
+        if (Math.abs(dz) > MAX_HIP_DEVIATION)
+          track.values[i + 2] = defaultHipPos.z
       }
     }
   })
