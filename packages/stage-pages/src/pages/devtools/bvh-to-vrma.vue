@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { RootMotionMode } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
 
-import { BVHLoader, convertBVHToVRMA } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
+import { BVHLoader, convertBVHToVRMA as convertV1 } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma'
+import { convertBVHToVRMA as convertV2 } from '@proj-airi/stage-ui-three/utils/bvh-to-vrma-2'
 import { useAnimationActionsStore } from '@proj-airi/stage-ui/stores/modules/animation-actions'
 import { computed, ref } from 'vue'
+
+type ConverterVersion = 'v1' | 'v2'
 
 interface ConversionItem {
   name: string
@@ -19,6 +22,7 @@ const items = ref<ConversionItem[]>([])
 const isDragging = ref(false)
 const scale = ref(0.01)
 const rootMotion = ref<RootMotionMode>('y-only')
+const converterVersion = ref<ConverterVersion>('v1')
 const importing = ref(false)
 
 const bvhLoader = new BVHLoader()
@@ -66,7 +70,15 @@ async function convertAll(files: File[]) {
     try {
       const text = await file.text()
       const bvh = bvhLoader.parse(text)
-      const buffer = await convertBVHToVRMA(bvh, { scale: scale.value, rootMotion: rootMotion.value })
+
+      let buffer: ArrayBuffer
+      if (converterVersion.value === 'v2') {
+        buffer = await convertV2(bvh, { scale: scale.value })
+      }
+      else {
+        buffer = await convertV1(bvh, { scale: scale.value, rootMotion: rootMotion.value })
+      }
+
       item.blob = new Blob([buffer], { type: 'model/gltf-binary' })
       item.status = 'done'
     }
@@ -154,6 +166,25 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
     <!-- Options -->
     <div :class="['flex flex-wrap items-center gap-4', 'text-sm']">
       <div :class="['flex items-center gap-2']">
+        <label for="bvh-converter">Converter</label>
+        <select
+          id="bvh-converter"
+          v-model="converterVersion"
+          :class="[
+            'rounded border px-2 py-1',
+            'border-neutral-300 dark:border-neutral-600',
+            'bg-white dark:bg-neutral-800',
+          ]"
+        >
+          <option value="v1">
+            v1 (custom fixes)
+          </option>
+          <option value="v2">
+            v2 (SystemAnimatorOnline)
+          </option>
+        </select>
+      </div>
+      <div :class="['flex items-center gap-2']">
         <label for="bvh-scale">Scale</label>
         <input
           id="bvh-scale"
@@ -167,9 +198,12 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
             'bg-white dark:bg-neutral-800',
           ]"
         >
-        <span :class="['text-neutral-500']">cm → 0.01, m → 1.0</span>
+        <span :class="['text-neutral-500']">cm -> 0.01, m -> 1.0</span>
       </div>
-      <div :class="['flex items-center gap-2']">
+      <div
+        v-if="converterVersion === 'v1'"
+        :class="['flex items-center gap-2']"
+      >
         <label for="bvh-root-motion">Root Motion</label>
         <select
           id="bvh-root-motion"
@@ -191,6 +225,16 @@ const errorCount = computed(() => items.value.filter(i => i.status === 'error').
           </option>
         </select>
       </div>
+    </div>
+
+    <!-- Converter description -->
+    <div :class="['text-xs text-neutral-500']">
+      <template v-if="converterVersion === 'v1'">
+        v1: Outlier frame detection + root motion modes + rest-offset subtraction.
+      </template>
+      <template v-else>
+        v2: Faithful SystemAnimatorOnline/bvh2vrma port. Grounding fix, no root motion stripping.
+      </template>
     </div>
 
     <!-- Drop zone -->

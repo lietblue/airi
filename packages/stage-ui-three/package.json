@@ -21,7 +21,8 @@
     "./utils/vrm-preview": "./src/utils/vrm-preview.ts",
     ".": "./src/index.ts",
     "./utils/vrma-duration": "./src/utils/vrma-duration.ts",
-    "./utils/bvh-to-vrma": "./src/utils/bvh-to-vrma/index.ts"
+    "./utils/bvh-to-vrma": "./src/utils/bvh-to-vrma/index.ts",
+    "./utils/bvh-to-vrma-2": "./src/utils/bvh-to-vrma-2/index.ts"
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit"
