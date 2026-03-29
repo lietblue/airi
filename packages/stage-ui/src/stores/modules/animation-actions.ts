@@ -2,7 +2,7 @@ import localforage from 'localforage'
 
 import { detectVrmaDurationMs } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
-import { until, useLocalStorage } from '@vueuse/core'
+import { useLocalStorage } from '@vueuse/core'
 import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -34,36 +34,34 @@ export interface ActionEntry {
   tags: string[]
 }
 
-// NOTICE: localforage key prefix for custom animation actions
-const LOCALFORAGE_KEY_PREFIX = 'animation-action-'
+// NOTICE: localforage is ONLY used for File/Blob storage (animation .vrma files, background media).
+// All metadata (tags, enabled, loop, name, etc.) is stored in localStorage via useLocalStorage
+// because localforage.setItem can hang in certain environments, causing silent data loss.
 
-// NOTICE: Builtin action field overrides (enabled, tags, etc.) are stored separately because
-// builtins have no StoredCustomAction record in IndexedDB.
-// NOTICE: This key must NOT start with LOCALFORAGE_KEY_PREFIX ('animation-action-') or
-// localforage.iterate will pick it up and try to parse it as a StoredCustomAction, causing
-// URL.createObjectURL(undefined) to throw and silently breaking the entire load.
+// NOTICE: localforage key prefix for custom animation action FILE blobs
+const LOCALFORAGE_KEY_PREFIX = 'animation-action-'
+const ACTION_FILE_PREFIX = 'airi-action-file-'
+const BUILTIN_MEDIA_PREFIX = 'airi-builtin-media-'
+
+// Legacy localforage keys — used for one-time migration to localStorage, then deleted.
 const BUILTIN_OVERRIDES_KEY = 'airi-builtin-action-overrides'
-// NOTICE: Legacy key that was accidentally prefixed with LOCALFORAGE_KEY_PREFIX.
-// Kept for one-time migration only; data is moved to BUILTIN_OVERRIDES_KEY then deleted.
 const BUILTIN_OVERRIDES_KEY_LEGACY = 'animation-action-builtin-overrides'
-// Global speaking behavior settings (not per-action).
 const SPEAKING_SETTINGS_KEY = 'airi-speaking-settings'
 
-interface SpeakingSettings {
-  /**
-   * When true, the thinking phase (before first token) also picks from the
-   * speaking actions pool instead of always playing the built-in 'thinking' action.
-   */
-  thinkingUseSpeakingActions: boolean
+type MediaType = 'bgMusic' | 'bgVideo' | 'fgVideo'
+
+function actionFileKey(actionId: string, type: 'vrma' | MediaType): string {
+  return `${ACTION_FILE_PREFIX}${actionId}-${type}`
+}
+
+function builtinMediaKey(actionId: string, type: MediaType): string {
+  return `${BUILTIN_MEDIA_PREFIX}${actionId}-${type}`
 }
 
 type BuiltinOverrides = Record<string, {
   enabled?: boolean
   loop?: boolean
   tags?: string[]
-  bgMusicFile?: File
-  bgVideoFile?: File
-  fgVideoFile?: File
 }>
 
 /**
@@ -77,11 +75,29 @@ type BuiltinOverrides = Record<string, {
  */
 export type ActionSource = 'idle-rotation' | 'speaking-cycle' | 'tool' | 'welcome' | 'user'
 
-interface StoredCustomAction {
+interface StoredCustomActionMeta {
   id: string
   name: string
   description: string
-  file: File
+  durationMs?: number
+  bgMusicUrl?: string
+  bgVideoUrl?: string
+  fgVideoUrl?: string
+  enabled: boolean
+  importedAt: number
+  loop: boolean
+  tags: string[]
+}
+
+/**
+ * Legacy format stored in localforage (IndexedDB). Used for one-time migration only.
+ * New data goes to localStorage via useLocalStorage.
+ */
+interface LegacyStoredCustomAction {
+  id: string
+  name: string
+  description: string
+  file?: File
   durationMs?: number
   bgMusicFile?: File
   bgVideoFile?: File
@@ -91,10 +107,8 @@ interface StoredCustomAction {
   fgVideoUrl?: string
   enabled: boolean
   importedAt: number
-  /** Whether the animation loops continuously. */
   loop?: boolean
   tags?: string[]
-  // Legacy fields — migrated on load, then removed from storage
   isIdle?: boolean
   isSpeakingAction?: boolean
 }
@@ -175,7 +189,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
   const loading = ref(false)
 
   /** When true, the thinking phase picks from speaking actions instead of hardcoding 'thinking'. */
-  const thinkingUseSpeakingActions = ref(false)
+  const thinkingUseSpeakingActions = useLocalStorage('settings/actions/thinking-use-speaking', false)
 
   /**
    * Tag name whose matching actions form the idle rotation pool.
@@ -187,6 +201,24 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
    * Actions tagged with this name are cycled while AIRI is outputting text.
    */
   const speakingPoolTag = useLocalStorage('settings/actions/speaking-tag', 'speaking')
+
+  /**
+   * Builtin action overrides (tags, enabled, loop) stored in localStorage.
+   * Persists instantly — no async localforage calls.
+   */
+  const builtinOverridesStorage = useLocalStorage<BuiltinOverrides>(
+    'settings/actions/builtin-overrides',
+    {},
+  )
+
+  /**
+   * Custom action metadata stored in localStorage (keyed by action ID).
+   * File blobs are stored separately in localforage/IndexedDB.
+   */
+  const customActionMetaStorage = useLocalStorage<Record<string, StoredCustomActionMeta>>(
+    'settings/actions/custom-action-meta',
+    {},
+  )
 
   /** All unique tag names across all actions. */
   const allTags = computed(() => [...new Set(actions.value.flatMap(a => a.tags))])
@@ -262,177 +294,214 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     return candidates[Math.floor(Math.random() * candidates.length)].id
   }
 
-  async function saveSpeakingSettings() {
-    await localforage.setItem<SpeakingSettings>(SPEAKING_SETTINGS_KEY, {
-      thinkingUseSpeakingActions: thinkingUseSpeakingActions.value,
-    }).catch(err => console.error('[animation-actions] failed to save speaking settings:', err))
+  function saveSpeakingSettings() {
+    // No-op: thinkingUseSpeakingActions uses useLocalStorage which auto-persists
   }
 
   async function loadCustomActionsFromIndexedDB() {
-    await until(loading).toBe(false)
     loading.value = true
 
     try {
-      // Migrate legacy builtin overrides key if it exists
-      const legacyOverrides = await localforage.getItem<Record<string, unknown>>(BUILTIN_OVERRIDES_KEY_LEGACY)
-      if (legacyOverrides) {
-        const existing = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
-        // Merge legacy into existing, converting old boolean fields
-        const merged: BuiltinOverrides = { ...existing }
-        for (const [id, override] of Object.entries(legacyOverrides)) {
-          const o = override as Record<string, unknown>
-          const tags = [...((merged[id]?.tags ?? (o.tags as string[] | undefined)) ?? [])].filter(t => t !== 'loop')
-          if (o.isIdle && !tags.includes(idlePoolTag.value))
-            tags.push(idlePoolTag.value)
-          if (o.isSpeakingAction && !tags.includes(speakingPoolTag.value))
-            tags.push(speakingPoolTag.value)
-          const loop = !!(o.loop || merged[id]?.loop)
-          merged[id] = {
-            ...merged[id],
-            ...(o.enabled !== undefined ? { enabled: o.enabled as boolean } : {}),
-            loop,
-            tags,
-          }
-        }
-        await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, merged)
-        await localforage.removeItem(BUILTIN_OVERRIDES_KEY_LEGACY)
-      }
+      // --- One-time migration from localforage to localStorage ---
+      await migrateFromLocalforage()
 
-      const speakingSettings = await localforage.getItem<SpeakingSettings>(SPEAKING_SETTINGS_KEY)
-      if (speakingSettings)
-        thinkingUseSpeakingActions.value = speakingSettings.thinkingUseSpeakingActions
-
-      // Migrate builtin overrides: convert old boolean fields and strip 'loop' from tags
-      const rawBuiltinOverrides = await localforage.getItem<Record<string, Record<string, unknown>>>(BUILTIN_OVERRIDES_KEY) ?? {}
-      let builtinOverridesDirty = false
-      const builtinOverrides: BuiltinOverrides = {}
-      for (const [id, o] of Object.entries(rawBuiltinOverrides)) {
-        const rawTags = (o.tags as string[] | undefined) ?? []
-        const hadLoopTag = rawTags.includes('loop')
-        const tags = rawTags.filter(t => t !== 'loop')
-        let migrated = hadLoopTag
-        if (o.isIdle && !tags.includes(idlePoolTag.value)) {
-          tags.push(idlePoolTag.value)
-          migrated = true
-        }
-        if (o.isSpeakingAction && !tags.includes(speakingPoolTag.value)) {
-          tags.push(speakingPoolTag.value)
-          migrated = true
-        }
-        // Derive loop from the old boolean field or from the presence of the 'loop' tag
-        const loop = !!(o.loop || hadLoopTag)
-        builtinOverrides[id] = {
-          ...(o.enabled !== undefined ? { enabled: o.enabled as boolean } : {}),
-          loop,
-          tags,
-        }
-        if (migrated)
-          builtinOverridesDirty = true
-      }
-      if (builtinOverridesDirty)
-        await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, builtinOverrides)
-      // Clean up orphaned localStorage key from the old loopTag setting
-      localStorage.removeItem('settings/actions/loop-tag')
-
+      // --- Load custom actions: metadata from localStorage, files from localforage ---
       const customEntries: ActionEntry[] = []
-      // NOTICE: localforage.iterate stops early if the callback returns a non-undefined value.
-      // An async callback always returns a Promise (non-undefined), so it would break after the
-      // first item. We use a synchronous callback and collect migration tasks to run afterward.
-      const pendingMigrations: Array<{ key: string, data: StoredCustomAction }> = []
-
-      await localforage.iterate<StoredCustomAction, void>((val, key) => {
-        if (!key.startsWith(LOCALFORAGE_KEY_PREFIX))
-          return
-        // Guard: skip any entry that isn't a valid StoredCustomAction (e.g. leftover legacy keys)
-        if (!(val.file instanceof File))
-          return
-
-        // Migrate legacy boolean fields to tags, and extract loop as a direct property
-        const rawTags = [...(val.tags ?? [])]
-        const hadLoopTag = rawTags.includes('loop')
-        const tags = rawTags.filter(t => t !== 'loop')
-        const loop = !!(val.loop || hadLoopTag)
-        let needsMigration = hadLoopTag
-        if (val.isIdle && !tags.includes(idlePoolTag.value)) {
-          tags.push(idlePoolTag.value)
-          needsMigration = true
-        }
-        if (val.isSpeakingAction && !tags.includes(speakingPoolTag.value)) {
-          tags.push(speakingPoolTag.value)
-          needsMigration = true
-        }
-        if (needsMigration || val.loop !== undefined) {
-          const { isIdle: _isIdle, isSpeakingAction: _isSpeakingAction, ...rest } = val
-          pendingMigrations.push({ key, data: { ...rest, loop, tags } })
+      for (const [id, meta] of Object.entries(customActionMetaStorage.value)) {
+        // Load .vrma file from localforage (the only thing stored there now)
+        let vrmaFile: Blob | null = await localforage.getItem<Blob>(actionFileKey(id, 'vrma'))
+        // Fallback: try legacy double-prefixed key
+        if (!vrmaFile) {
+          vrmaFile = await localforage.getItem(`${LOCALFORAGE_KEY_PREFIX}${id}`)
+            .then((val) => {
+              const legacy = val as LegacyStoredCustomAction | null
+              return legacy?.file instanceof Blob ? legacy.file : null
+            })
+            .catch(() => null)
         }
 
-        // Create blob URLs for the stored files
-        const vrmaUrl = URL.createObjectURL(val.file)
-        const bgMusicUrl = val.bgMusicFile
-          ? URL.createObjectURL(val.bgMusicFile)
-          : val.bgMusicUrl
-        const bgVideoUrl = val.bgVideoFile
-          ? URL.createObjectURL(val.bgVideoFile)
-          : val.bgVideoUrl
-        const fgVideoUrl = val.fgVideoFile
-          ? URL.createObjectURL(val.fgVideoFile)
-          : val.fgVideoUrl
+        if (!vrmaFile)
+          continue
 
-        // Track blob URLs for cleanup
-        customActionBlobUrls.set(val.id, { vrmaUrl, bgMusicUrl, bgVideoUrl, fgVideoUrl })
+        // Load media files from localforage
+        const [bgMusicBlob, bgVideoBlob, fgVideoBlob] = await Promise.all([
+          localforage.getItem<Blob>(actionFileKey(id, 'bgMusic')),
+          localforage.getItem<Blob>(actionFileKey(id, 'bgVideo')),
+          localforage.getItem<Blob>(actionFileKey(id, 'fgVideo')),
+        ])
+
+        const vrmaUrl = URL.createObjectURL(vrmaFile)
+        const bgMusicUrl = bgMusicBlob ? URL.createObjectURL(bgMusicBlob) : meta.bgMusicUrl
+        const bgVideoUrl = bgVideoBlob ? URL.createObjectURL(bgVideoBlob) : meta.bgVideoUrl
+        const fgVideoUrl = fgVideoBlob ? URL.createObjectURL(fgVideoBlob) : meta.fgVideoUrl
+
+        customActionBlobUrls.set(id, { vrmaUrl, bgMusicUrl, bgVideoUrl, fgVideoUrl })
 
         customEntries.push({
-          id: val.id,
-          name: val.name,
-          description: val.description,
+          id,
+          name: meta.name,
+          description: meta.description,
           vrmaUrl,
           isBuiltin: false,
-          durationMs: val.durationMs,
+          durationMs: meta.durationMs,
           bgMusicUrl,
           bgVideoUrl,
           fgVideoUrl,
-          enabled: val.enabled,
-          importedAt: val.importedAt,
-          loop,
-          tags,
+          enabled: meta.enabled,
+          importedAt: meta.importedAt,
+          loop: meta.loop,
+          tags: meta.tags,
         })
-      })
+      }
 
-      // Run deferred migrations outside the iterate callback
-      await Promise.all(
-        pendingMigrations.map(({ key, data }) =>
-          localforage.setItem(key, data)
-            .catch(err => console.error('[animation-actions] failed to migrate legacy fields for', data.id, err)),
-        ),
-      )
+      // Merge: built-ins first (with overrides from localStorage), then custom sorted by import time
+      const builtinOverrides = builtinOverridesStorage.value
+      const builtinEntries = await Promise.all(builtinActions.map(async (a) => {
+        const override = builtinOverrides[a.id]
+        if (!override)
+          return a
+        const base = {
+          ...a,
+          ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
+          loop: override.loop ?? a.loop,
+          tags: override.tags !== undefined ? override.tags : a.tags,
+        }
+        // Load media files from localforage
+        const [bgMusicFile, bgVideoFile, fgVideoFile] = await Promise.all([
+          localforage.getItem<Blob>(builtinMediaKey(a.id, 'bgMusic')),
+          localforage.getItem<Blob>(builtinMediaKey(a.id, 'bgVideo')),
+          localforage.getItem<Blob>(builtinMediaKey(a.id, 'fgVideo')),
+        ])
+        return {
+          ...base,
+          ...(bgMusicFile ? { bgMusicUrl: URL.createObjectURL(bgMusicFile) } : {}),
+          ...(bgVideoFile ? { bgVideoUrl: URL.createObjectURL(bgVideoFile) } : {}),
+          ...(fgVideoFile ? { fgVideoUrl: URL.createObjectURL(fgVideoFile) } : {}),
+        }
+      }))
 
-      // Merge: built-ins first (with any persisted overrides applied), then custom sorted by import time (newest first)
       actions.value = [
-        ...builtinActions.map((a) => {
-          const override = builtinOverrides[a.id]
-          if (!override)
-            return a
-          return {
-            ...a,
-            ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
-            loop: override.loop ?? a.loop,
-            // When user has explicitly saved tags, use them as the final value (replacement)
-            // so that removing a builtin's default tag actually takes effect.
-            tags: override.tags !== undefined ? override.tags : a.tags,
-            // Restore persisted media blob URLs for builtins
-            ...(override.bgMusicFile ? { bgMusicUrl: URL.createObjectURL(override.bgMusicFile) } : {}),
-            ...(override.bgVideoFile ? { bgVideoUrl: URL.createObjectURL(override.bgVideoFile) } : {}),
-            ...(override.fgVideoFile ? { fgVideoUrl: URL.createObjectURL(override.fgVideoFile) } : {}),
-          }
-        }),
+        ...builtinEntries,
         ...customEntries.sort((a, b) => b.importedAt - a.importedAt),
       ]
     }
     catch (err) {
-      console.error('[animation-actions] failed to load from IndexedDB:', err)
+      console.error('[animation-actions] failed to load:', err)
     }
     finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * One-time migration: move metadata from localforage (IndexedDB) to localStorage.
+   * After migration, localforage only stores File blobs.
+   */
+  async function migrateFromLocalforage() {
+    // Skip if already migrated (localStorage has data)
+    if (Object.keys(customActionMetaStorage.value).length > 0 || Object.keys(builtinOverridesStorage.value).length > 0)
+      return
+
+    try {
+      // Migrate legacy builtin overrides
+      const legacyOverrides = await localforage.getItem<Record<string, unknown>>(BUILTIN_OVERRIDES_KEY_LEGACY)
+      const rawOverrides = await localforage.getItem<Record<string, Record<string, unknown>>>(BUILTIN_OVERRIDES_KEY) ?? {}
+
+      // Merge legacy into raw if it exists
+      if (legacyOverrides) {
+        for (const [id, override] of Object.entries(legacyOverrides)) {
+          const o = override as Record<string, unknown>
+          rawOverrides[id] = { ...rawOverrides[id], ...o }
+        }
+        await localforage.removeItem(BUILTIN_OVERRIDES_KEY_LEGACY)
+      }
+
+      // Process builtin overrides: convert legacy fields, extract to localStorage
+      const migratedOverrides: BuiltinOverrides = {}
+      for (const [id, o] of Object.entries(rawOverrides)) {
+        const rawTags = (o.tags as string[] | undefined) ?? []
+        const tags = rawTags.filter(t => t !== 'loop')
+        if (o.isIdle && !tags.includes(idlePoolTag.value))
+          tags.push(idlePoolTag.value)
+        if (o.isSpeakingAction && !tags.includes(speakingPoolTag.value))
+          tags.push(speakingPoolTag.value)
+        const loop = !!(o.loop || rawTags.includes('loop'))
+        migratedOverrides[id] = {
+          ...(o.enabled !== undefined ? { enabled: o.enabled as boolean } : {}),
+          loop,
+          tags,
+        }
+        // Migrate embedded media files to separate localforage keys
+        if (o.bgMusicFile instanceof Blob)
+          await localforage.setItem(builtinMediaKey(id, 'bgMusic'), o.bgMusicFile).catch(() => {})
+        if (o.bgVideoFile instanceof Blob)
+          await localforage.setItem(builtinMediaKey(id, 'bgVideo'), o.bgVideoFile).catch(() => {})
+        if (o.fgVideoFile instanceof Blob)
+          await localforage.setItem(builtinMediaKey(id, 'fgVideo'), o.fgVideoFile).catch(() => {})
+      }
+      if (Object.keys(migratedOverrides).length > 0)
+        builtinOverridesStorage.value = migratedOverrides
+
+      // Migrate speaking settings
+      const speakingSettings = await localforage.getItem<{ thinkingUseSpeakingActions: boolean }>(SPEAKING_SETTINGS_KEY)
+      if (speakingSettings)
+        thinkingUseSpeakingActions.value = speakingSettings.thinkingUseSpeakingActions
+
+      // Migrate custom action metadata from localforage to localStorage
+      const migratedMeta: Record<string, StoredCustomActionMeta> = {}
+      await localforage.iterate<LegacyStoredCustomAction, void>((val, key) => {
+        if (!key.startsWith(LOCALFORAGE_KEY_PREFIX))
+          return
+        if (typeof val?.id !== 'string' || typeof val?.name !== 'string')
+          return
+        // Convert legacy fields
+        const rawTags = [...(val.tags ?? [])]
+        const tags = rawTags.filter(t => t !== 'loop')
+        if (val.isIdle && !tags.includes(idlePoolTag.value))
+          tags.push(idlePoolTag.value)
+        if (val.isSpeakingAction && !tags.includes(speakingPoolTag.value))
+          tags.push(speakingPoolTag.value)
+        const loop = !!(val.loop || rawTags.includes('loop'))
+
+        migratedMeta[val.id] = {
+          id: val.id,
+          name: val.name,
+          description: val.description,
+          durationMs: val.durationMs,
+          bgMusicUrl: val.bgMusicUrl,
+          bgVideoUrl: val.bgVideoUrl,
+          fgVideoUrl: val.fgVideoUrl,
+          enabled: val.enabled,
+          importedAt: val.importedAt,
+          loop,
+          tags,
+        }
+      })
+
+      // Extract embedded files to separate localforage keys
+      for (const [id] of Object.entries(migratedMeta)) {
+        const legacyKey = `${LOCALFORAGE_KEY_PREFIX}${id}`
+        const legacy = await localforage.getItem<LegacyStoredCustomAction>(legacyKey)
+        if (!legacy)
+          continue
+        if (legacy.file instanceof Blob)
+          await localforage.setItem(actionFileKey(id, 'vrma'), legacy.file).catch(() => {})
+        if (legacy.bgMusicFile instanceof Blob)
+          await localforage.setItem(actionFileKey(id, 'bgMusic'), legacy.bgMusicFile).catch(() => {})
+        if (legacy.bgVideoFile instanceof Blob)
+          await localforage.setItem(actionFileKey(id, 'bgVideo'), legacy.bgVideoFile).catch(() => {})
+        if (legacy.fgVideoFile instanceof Blob)
+          await localforage.setItem(actionFileKey(id, 'fgVideo'), legacy.fgVideoFile).catch(() => {})
+      }
+
+      if (Object.keys(migratedMeta).length > 0)
+        customActionMetaStorage.value = migratedMeta
+
+      // Clean up old localStorage key
+      localStorage.removeItem('settings/actions/loop-tag')
+    }
+    catch (err) {
+      console.error('[animation-actions] migration from localforage failed:', err)
     }
   }
 
@@ -458,17 +527,24 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       tags: [],
     }
 
-    const stored: StoredCustomAction = {
-      id,
-      name,
-      description,
-      file,
-      durationMs,
-      enabled: true,
-      importedAt,
-      loop: false,
-      tags: [],
+    // Save metadata to localStorage (instant, synchronous via useLocalStorage)
+    customActionMetaStorage.value = {
+      ...customActionMetaStorage.value,
+      [id]: {
+        id,
+        name,
+        description,
+        durationMs,
+        enabled: true,
+        importedAt,
+        loop: false,
+        tags: [],
+      },
     }
+
+    // Save .vrma file to localforage (async, for File blob storage only)
+    await localforage.setItem(actionFileKey(id, 'vrma'), file)
+      .catch(err => console.error('[animation-actions] failed to save .vrma file to IndexedDB:', err))
 
     // Insert after builtins to keep consistent order with loadCustomActionsFromIndexedDB
     const firstCustomIdx = actions.value.findIndex(a => !a.isBuiltin)
@@ -480,8 +556,6 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       copy.splice(firstCustomIdx, 0, entry)
       actions.value = copy
     }
-    await localforage.setItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`, stored)
-      .catch(err => console.error('[animation-actions] failed to save to IndexedDB:', err))
 
     return entry
   }
@@ -494,7 +568,20 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     }
 
     actions.value = actions.value.filter(a => a.id !== id)
-    await localforage.removeItem(`${LOCALFORAGE_KEY_PREFIX}${id}`)
+
+    // Remove metadata from localStorage
+    const { [id]: _, ...rest } = customActionMetaStorage.value
+    customActionMetaStorage.value = rest
+
+    // Remove file entries from localforage
+    await Promise.all([
+      localforage.removeItem(actionFileKey(id, 'vrma')),
+      localforage.removeItem(actionFileKey(id, 'bgMusic')),
+      localforage.removeItem(actionFileKey(id, 'bgVideo')),
+      localforage.removeItem(actionFileKey(id, 'fgVideo')),
+      // Also clean up legacy key if it exists
+      localforage.removeItem(`${LOCALFORAGE_KEY_PREFIX}${id}`),
+    ])
 
     // If we were playing this action, reset to idle
     if (currentActionId.value === id)
@@ -556,45 +643,77 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       fgVideoUrl,
     }
 
-    // Persist: custom actions go to their own record; builtin overrides go to a shared map
+    // Persist metadata to localStorage (synchronous, never hangs)
     if (existing.isBuiltin) {
-      const overrides = await localforage.getItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY) ?? {}
+      const overrides = { ...builtinOverridesStorage.value }
       overrides[id] = {
         ...overrides[id],
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
         ...(patch.loop !== undefined ? { loop: patch.loop } : {}),
         ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
-        // Persist media files for builtins so they survive page reloads
-        ...('bgMusicFile' in patch ? { bgMusicFile: patch.bgMusicFile ?? undefined } : {}),
-        ...('bgVideoFile' in patch ? { bgVideoFile: patch.bgVideoFile ?? undefined } : {}),
-        ...('fgVideoFile' in patch ? { fgVideoFile: patch.fgVideoFile ?? undefined } : {}),
       }
-      await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, overrides)
-        .catch(err => console.error('[animation-actions] failed to save builtin overrides:', err))
+      builtinOverridesStorage.value = overrides
+
+      // Save media files to localforage (async, File blobs only)
+      const fileSaves: Promise<unknown>[] = []
+      if ('bgMusicFile' in patch) {
+        fileSaves.push(patch.bgMusicFile
+          ? localforage.setItem(builtinMediaKey(id, 'bgMusic'), patch.bgMusicFile)
+          : localforage.removeItem(builtinMediaKey(id, 'bgMusic')))
+      }
+      if ('bgVideoFile' in patch) {
+        fileSaves.push(patch.bgVideoFile
+          ? localforage.setItem(builtinMediaKey(id, 'bgVideo'), patch.bgVideoFile)
+          : localforage.removeItem(builtinMediaKey(id, 'bgVideo')))
+      }
+      if ('fgVideoFile' in patch) {
+        fileSaves.push(patch.fgVideoFile
+          ? localforage.setItem(builtinMediaKey(id, 'fgVideo'), patch.fgVideoFile)
+          : localforage.removeItem(builtinMediaKey(id, 'fgVideo')))
+      }
+      if (fileSaves.length > 0)
+        await Promise.all(fileSaves)
       return
     }
 
-    const stored = await localforage.getItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`)
-    // NOTICE: If the stored record is missing (e.g. IndexedDB was cleared externally),
-    // we can't reconstruct the File object from memory — blob URLs are transient and the
-    // original File is gone after reload. Skip the write rather than saving a broken record.
-    if (stored) {
-      await localforage.setItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`, {
-        ...stored,
-        name: patch.name ?? stored.name,
-        description: patch.description ?? stored.description,
-        enabled: patch.enabled ?? stored.enabled,
-        loop: patch.loop ?? stored.loop,
-        tags: patch.tags ?? stored.tags,
-        bgMusicFile: 'bgMusicFile' in patch ? (patch.bgMusicFile ?? undefined) : stored.bgMusicFile,
-        bgVideoFile: 'bgVideoFile' in patch ? (patch.bgVideoFile ?? undefined) : stored.bgVideoFile,
-        fgVideoFile: 'fgVideoFile' in patch ? (patch.fgVideoFile ?? undefined) : stored.fgVideoFile,
-        // Clear the plain URL fields since we're storing files now
-        bgMusicUrl: 'bgMusicFile' in patch ? undefined : stored.bgMusicUrl,
-        bgVideoUrl: 'bgVideoFile' in patch ? undefined : stored.bgVideoUrl,
-        fgVideoUrl: 'fgVideoFile' in patch ? undefined : stored.fgVideoUrl,
-      }).catch(err => console.error('[animation-actions] failed to update custom action in IndexedDB:', err))
+    // Custom action: update metadata in localStorage
+    const meta = customActionMetaStorage.value[id]
+    if (meta) {
+      customActionMetaStorage.value = {
+        ...customActionMetaStorage.value,
+        [id]: {
+          ...meta,
+          name: patch.name ?? meta.name,
+          description: patch.description ?? meta.description,
+          enabled: patch.enabled ?? meta.enabled,
+          loop: patch.loop ?? meta.loop,
+          tags: patch.tags ?? meta.tags,
+          bgMusicUrl: 'bgMusicFile' in patch ? undefined : meta.bgMusicUrl,
+          bgVideoUrl: 'bgVideoFile' in patch ? undefined : meta.bgVideoUrl,
+          fgVideoUrl: 'fgVideoFile' in patch ? undefined : meta.fgVideoUrl,
+        },
+      }
     }
+
+    // Save media files to localforage (async, File blobs only)
+    const fileSaves: Promise<unknown>[] = []
+    if ('bgMusicFile' in patch) {
+      fileSaves.push(patch.bgMusicFile
+        ? localforage.setItem(actionFileKey(id, 'bgMusic'), patch.bgMusicFile)
+        : localforage.removeItem(actionFileKey(id, 'bgMusic')))
+    }
+    if ('bgVideoFile' in patch) {
+      fileSaves.push(patch.bgVideoFile
+        ? localforage.setItem(actionFileKey(id, 'bgVideo'), patch.bgVideoFile)
+        : localforage.removeItem(actionFileKey(id, 'bgVideo')))
+    }
+    if ('fgVideoFile' in patch) {
+      fileSaves.push(patch.fgVideoFile
+        ? localforage.setItem(actionFileKey(id, 'fgVideo'), patch.fgVideoFile)
+        : localforage.removeItem(actionFileKey(id, 'fgVideo')))
+    }
+    if (fileSaves.length > 0)
+      await Promise.all(fileSaves)
   }
 
   /**
