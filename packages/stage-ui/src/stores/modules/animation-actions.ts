@@ -61,6 +61,9 @@ type BuiltinOverrides = Record<string, {
   enabled?: boolean
   loop?: boolean
   tags?: string[]
+  bgMusicFile?: File
+  bgVideoFile?: File
+  fgVideoFile?: File
 }>
 
 /**
@@ -317,8 +320,12 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       localStorage.removeItem('settings/actions/loop-tag')
 
       const customEntries: ActionEntry[] = []
+      // NOTICE: localforage.iterate stops early if the callback returns a non-undefined value.
+      // An async callback always returns a Promise (non-undefined), so it would break after the
+      // first item. We use a synchronous callback and collect migration tasks to run afterward.
+      const pendingMigrations: Array<{ key: string, data: StoredCustomAction }> = []
 
-      await localforage.iterate<StoredCustomAction, void>(async (val, key) => {
+      await localforage.iterate<StoredCustomAction, void>((val, key) => {
         if (!key.startsWith(LOCALFORAGE_KEY_PREFIX))
           return
         // Guard: skip any entry that isn't a valid StoredCustomAction (e.g. leftover legacy keys)
@@ -341,8 +348,7 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         }
         if (needsMigration || val.loop !== undefined) {
           const { isIdle: _isIdle, isSpeakingAction: _isSpeakingAction, ...rest } = val
-          await localforage.setItem(key, { ...rest, loop, tags })
-            .catch(err => console.error('[animation-actions] failed to migrate legacy fields for', val.id, err))
+          pendingMigrations.push({ key, data: { ...rest, loop, tags } })
         }
 
         // Create blob URLs for the stored files
@@ -377,6 +383,14 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         })
       })
 
+      // Run deferred migrations outside the iterate callback
+      await Promise.all(
+        pendingMigrations.map(({ key, data }) =>
+          localforage.setItem(key, data)
+            .catch(err => console.error('[animation-actions] failed to migrate legacy fields for', data.id, err)),
+        ),
+      )
+
       // Merge: built-ins first (with any persisted overrides applied), then custom sorted by import time (newest first)
       actions.value = [
         ...builtinActions.map((a) => {
@@ -387,8 +401,13 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
             ...a,
             ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
             loop: override.loop ?? a.loop,
-            // Merge override tags onto the builtin's default tags (union)
-            tags: [...new Set([...a.tags, ...(override.tags ?? [])])],
+            // When user has explicitly saved tags, use them as the final value (replacement)
+            // so that removing a builtin's default tag actually takes effect.
+            tags: override.tags !== undefined ? override.tags : a.tags,
+            // Restore persisted media blob URLs for builtins
+            ...(override.bgMusicFile ? { bgMusicUrl: URL.createObjectURL(override.bgMusicFile) } : {}),
+            ...(override.bgVideoFile ? { bgVideoUrl: URL.createObjectURL(override.bgVideoFile) } : {}),
+            ...(override.fgVideoFile ? { fgVideoUrl: URL.createObjectURL(override.fgVideoFile) } : {}),
           }
         }),
         ...customEntries.sort((a, b) => b.importedAt - a.importedAt),
@@ -436,7 +455,16 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
       tags: [],
     }
 
-    actions.value = [entry, ...actions.value]
+    // Insert after builtins to keep consistent order with loadCustomActionsFromIndexedDB
+    const firstCustomIdx = actions.value.findIndex(a => !a.isBuiltin)
+    if (firstCustomIdx === -1) {
+      actions.value = [...actions.value, entry]
+    }
+    else {
+      const copy = [...actions.value]
+      copy.splice(firstCustomIdx, 0, entry)
+      actions.value = copy
+    }
     await localforage.setItem<StoredCustomAction>(`${LOCALFORAGE_KEY_PREFIX}${id}`, stored)
       .catch(err => console.error('[animation-actions] failed to save to IndexedDB:', err))
 
@@ -520,8 +548,11 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
         ...overrides[id],
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
         ...(patch.loop !== undefined ? { loop: patch.loop } : {}),
-        // For builtins, store only the delta from the builtin's default tags
         ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
+        // Persist media files for builtins so they survive page reloads
+        ...('bgMusicFile' in patch ? { bgMusicFile: patch.bgMusicFile ?? undefined } : {}),
+        ...('bgVideoFile' in patch ? { bgVideoFile: patch.bgVideoFile ?? undefined } : {}),
+        ...('fgVideoFile' in patch ? { fgVideoFile: patch.fgVideoFile ?? undefined } : {}),
       }
       await localforage.setItem<BuiltinOverrides>(BUILTIN_OVERRIDES_KEY, overrides)
         .catch(err => console.error('[animation-actions] failed to save builtin overrides:', err))
