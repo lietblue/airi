@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { createVrmPoseApplier, PerceptionState } from '@proj-airi/model-driver-mediapipe'
 
-import { createMediaPipeBackend, createMocapEngine } from '@proj-airi/model-driver-mediapipe'
+import { createMocapEngine, createWorkerBackend } from '@proj-airi/model-driver-mediapipe'
 import { ThreeScene, useModelStore } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { useSettings } from '@proj-airi/stage-ui/stores/settings'
@@ -498,7 +498,7 @@ async function startCamera() {
 async function startPipeline() {
   if (!videoRef.value || engine)
     return
-  const backend = createMediaPipeBackend()
+  const backend = createWorkerBackend()
   engine = createMocapEngine(backend, toRaw(config.value))
   await engine.init()
   engine.start(
@@ -519,7 +519,7 @@ async function startPipeline() {
 function stopAll() {
   ignoreErrorsUntil.value = Date.now() + 1500
   canvasRef.value?.getContext('2d')?.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
-  engine?.stop()
+  engine?.dispose()
   engine = undefined
   handDetected.value = false
   try {

@@ -1,0 +1,113 @@
+// Main-thread proxy that implements MocapBackend by forwarding inference
+// to a dedicated Web Worker via postMessage + ImageBitmap transfer.
+
+import type { MocapBackend, MocapConfig, MocapJob, PerceptionPartial } from '../types'
+import type { WorkerRequest, WorkerResponse } from './worker-protocol'
+
+const TAG = '[WorkerBackend]'
+
+export function createWorkerBackend(): MocapBackend {
+  let worker: Worker | null = null
+  let busy = false
+  let nextId = 0
+  const pending = new Map<number, {
+    resolve: (value: any) => void
+    reject: (reason: any) => void
+  }>()
+
+  function post(msg: WorkerRequest, transfer?: Transferable[]) {
+    worker!.postMessage(msg, transfer ?? [])
+  }
+
+  function request<T>(msg: WorkerRequest, transfer?: Transferable[]): Promise<T> {
+    return new Promise((resolve, reject) => {
+      pending.set(msg.id, { resolve, reject })
+      post(msg, transfer)
+    })
+  }
+
+  function handleMessage(event: MessageEvent<WorkerResponse>) {
+    const msg = event.data
+    console.debug(TAG, 'recv', msg.type, 'id=', msg.id, 'error' in msg && msg.error ? `ERROR: ${msg.error}` : 'ok')
+    const entry = pending.get(msg.id)
+    if (!entry)
+      return
+    pending.delete(msg.id)
+
+    if ('error' in msg && msg.error) {
+      entry.reject(new Error(msg.error))
+      return
+    }
+
+    if (msg.type === 'run-result') {
+      entry.resolve(msg.result ?? {})
+    }
+    else {
+      entry.resolve(undefined)
+    }
+  }
+
+  function handleError(e: ErrorEvent) {
+    console.error(TAG, 'Worker error event:', e.message, e.filename, e.lineno)
+    for (const [, entry] of pending)
+      entry.reject(new Error(`Worker crashed: ${e.message}`))
+    pending.clear()
+    busy = false
+  }
+
+  async function init(config: MocapConfig): Promise<void> {
+    if (!worker) {
+      console.debug(TAG, 'Creating worker...')
+      worker = new Worker(
+        new URL('./mediapipe-worker.ts', import.meta.url),
+        { type: 'module' },
+      )
+      worker.addEventListener('message', handleMessage)
+      worker.addEventListener('error', handleError)
+      console.debug(TAG, 'Worker created')
+    }
+
+    const id = nextId++
+    console.debug(TAG, 'Sending init, id=', id)
+    await request({ type: 'init', id, config })
+    console.debug(TAG, 'Init done')
+  }
+
+  function isBusy(): boolean {
+    return busy
+  }
+
+  async function run(
+    frame: TexImageSource,
+    jobs: MocapJob[],
+    nowMs: number,
+  ): Promise<PerceptionPartial> {
+    busy = true
+    try {
+      const bitmap = await createImageBitmap(frame as ImageBitmapSource)
+      const id = nextId++
+      const result = await request<PerceptionPartial>(
+        { type: 'run', id, frame: bitmap, jobs, nowMs },
+        [bitmap],
+      )
+      return result
+    }
+    finally {
+      busy = false
+    }
+  }
+
+  function dispose() {
+    console.debug(TAG, 'Disposing worker')
+    if (worker) {
+      worker.terminate()
+      worker = null
+    }
+    for (const [, entry] of pending)
+      entry.reject(new Error('Worker disposed'))
+    pending.clear()
+    busy = false
+  }
+
+  return { init, isBusy, run, dispose }
+}

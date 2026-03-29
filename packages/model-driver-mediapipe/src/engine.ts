@@ -146,10 +146,16 @@ export function createMocapEngine(backend: MocapBackend, initialConfig: MocapCon
     rafId = undefined
   }
 
+  function dispose() {
+    stop()
+    backend.dispose?.()
+  }
+
   return {
     init,
     start,
     stop,
+    dispose,
     updateConfig,
     resetState,
   }

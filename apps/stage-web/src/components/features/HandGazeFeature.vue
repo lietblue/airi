@@ -3,7 +3,7 @@ import type { PerceptionState } from '@proj-airi/model-driver-mediapipe'
 import type { VrmFrameHook } from '@proj-airi/stage-ui-three'
 
 import { errorMessageFrom } from '@moeru/std'
-import { createMediaPipeBackend, createMocapEngine } from '@proj-airi/model-driver-mediapipe'
+import { createMocapEngine, createWorkerBackend } from '@proj-airi/model-driver-mediapipe'
 import { useModelStore } from '@proj-airi/stage-ui-three'
 import { useHandVisionStore } from '@proj-airi/stage-ui/stores/modules/hand-vision'
 import { computeOpenness, createGestureStateMachine } from '@proj-airi/stage-ui/utils/hand-gesture'
@@ -272,7 +272,7 @@ function onPerception(state: PerceptionState) {
 async function startPipeline() {
   if (!videoRef.value || engine)
     return
-  const backend = createMediaPipeBackend()
+  const backend = createWorkerBackend()
   engine = createMocapEngine(backend, toRaw(config))
   await engine.init()
   engine.start(
@@ -315,7 +315,7 @@ async function startCamera() {
 
 function stopAll() {
   ignoreErrorsUntil = Date.now() + 1500
-  engine?.stop()
+  engine?.dispose()
   engine = undefined
   handVisionStore.onHandLost()
   try {

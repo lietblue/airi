@@ -2,7 +2,7 @@
 import type { PerceptionState, VrmPoseTargets } from '@proj-airi/model-driver-mediapipe'
 import type { Vector3Like } from 'three'
 
-import { createMediaPipeBackend, createMocapEngine, createVrmPoseApplier, drawOverlay, poseToVrmTargets } from '@proj-airi/model-driver-mediapipe'
+import { createMocapEngine, createVrmPoseApplier, createWorkerBackend, drawOverlay, poseToVrmTargets } from '@proj-airi/model-driver-mediapipe'
 import { ThreeScene } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { useSettings } from '@proj-airi/stage-ui/stores/settings'
@@ -145,7 +145,7 @@ async function startPipeline() {
   if (engine)
     return
 
-  const backend = createMediaPipeBackend()
+  const backend = createWorkerBackend()
   engine = createMocapEngine(backend, toRaw(config.value))
   await engine.init()
 
@@ -215,7 +215,7 @@ async function startPipeline() {
 }
 
 function stopPipeline() {
-  engine?.stop()
+  engine?.dispose()
   engine = undefined
   latestState.value = undefined
   latestPoseTargets.value = undefined

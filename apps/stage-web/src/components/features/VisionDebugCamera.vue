@@ -2,7 +2,7 @@
 import type { PerceptionState } from '@proj-airi/model-driver-mediapipe'
 
 import { errorMessageFrom } from '@moeru/std'
-import { createMediaPipeBackend, createMocapEngine, drawOverlay } from '@proj-airi/model-driver-mediapipe'
+import { createMocapEngine, createWorkerBackend, drawOverlay } from '@proj-airi/model-driver-mediapipe'
 import { onUnmounted, ref, toRaw } from 'vue'
 
 const videoRef = ref<HTMLVideoElement>()
@@ -76,7 +76,7 @@ async function start() {
     videoRef.value.srcObject = stream
     await videoRef.value.play()
 
-    const backend = createMediaPipeBackend()
+    const backend = createWorkerBackend()
     engine = createMocapEngine(backend, toRaw(config))
     await engine.init()
     engine.start(
@@ -99,7 +99,7 @@ async function start() {
 }
 
 function stop() {
-  engine?.stop()
+  engine?.dispose()
   engine = undefined
   try {
     stream?.getTracks().forEach(t => t.stop())

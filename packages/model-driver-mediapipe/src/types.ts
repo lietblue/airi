@@ -60,6 +60,7 @@ export interface MocapBackend {
   init: (config: MocapConfig) => Promise<void>
   isBusy: () => boolean
   run: (frame: TexImageSource, jobs: MocapJob[], nowMs: number) => Promise<PerceptionPartial>
+  dispose?: () => void
 }
 
 export interface MocapEngine {
@@ -70,6 +71,7 @@ export interface MocapEngine {
     options?: { onError?: (error: unknown) => void },
   ) => void
   stop: () => void
+  dispose: () => void
   updateConfig: (config: MocapConfig) => void
   resetState: () => void
 }

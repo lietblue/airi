@@ -1,5 +1,6 @@
 export * from '../tasks/tasks'
 export * from './backends/mediapipe'
+export * from './backends/worker-backend'
 export * from './engine'
 export * from './three'
 export * from './types'
