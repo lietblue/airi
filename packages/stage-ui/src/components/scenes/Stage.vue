@@ -69,7 +69,17 @@ const {
 } = storeToRefs(settingsStore)
 const { mouthOpenSize } = storeToRefs(useSpeakingStore())
 const animationActionsStore = useAnimationActionsStore()
-const { currentActionUrl, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions, isCurrentActionLoop, isCurrentActionIdle } = storeToRefs(animationActionsStore)
+const { currentActionUrl, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions, isCurrentActionLoop, isCurrentActionIdle, currentActionSource } = storeToRefs(animationActionsStore)
+
+// NOTICE: During the speaking cycle, force all animations to play once (LoopOnce) regardless
+// of the action's loop setting. This ensures handleAnimationComplete fires so the cycle can
+// pick the next speaking animation. Without this, looping animations would play indefinitely
+// and block the speaking animation rotation.
+const effectiveLoop = computed(() => {
+  if (currentActionSource.value === 'speaking-cycle')
+    return false
+  return isCurrentActionLoop.value
+})
 const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
 
@@ -498,6 +508,9 @@ function handleAnimationComplete() {
 }
 
 chatHookCleanups.push(onBeforeSend(async () => {
+  // Reset speaking state for the new turn. If the previous response was interrupted,
+  // onAssistantResponseEnd may not have fired, leaving the flag stale.
+  speakingAnimationStarted = false
   currentMotion.value = { group: EmotionThinkMotionName }
   if (stageModelRenderer.value === 'vrm') {
     if (thinkingUseSpeakingActions.value)
@@ -576,7 +589,7 @@ let idleRotationTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   idleRotationTimer = setInterval(() => {
-    if (isCurrentActionIdle.value)
+    if (stageModelRenderer.value === 'vrm' && isCurrentActionIdle.value)
       animationActionsStore.stopAction() // source is set to 'idle-rotation' inside stopAction
   }, IDLE_ROTATION_INTERVAL_MS)
   db.value = drizzle({ connection: { bundles: getImportUrlBundles() } })
@@ -667,7 +680,7 @@ defineExpose({
           class="relative z-1 h-full w-full"
           :model-src="stageModelSelectedUrl"
           :idle-animation="currentActionUrl"
-          :loop="isCurrentActionLoop"
+          :loop="effectiveLoop"
           :paused="paused"
           :show-axes="stageViewControlsEnabled"
           :current-audio-source="currentAudioSource"
