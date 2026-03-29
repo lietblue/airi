@@ -70,6 +70,7 @@ export function createMocapEngine(backend: MocapBackend, initialConfig: MocapCon
   let droppedFrames = 0
   let lastPartial: PerceptionPartial = {}
   let rafId: number | undefined
+  let latencyMs = 0
 
   async function init() {
     await backend.init(config)
@@ -93,7 +94,24 @@ export function createMocapEngine(backend: MocapBackend, initialConfig: MocapCon
     running = true
     resetState()
 
-    const tick = async () => {
+    // Fire-and-forget: dispatch inference to the backend without blocking the
+    // rAF loop. When the result arrives, merge it into lastPartial and call
+    // onState on the next tick. This keeps the main thread running at full
+    // frame rate while perception data updates asynchronously.
+    function dispatchInference(frame: TexImageSource, jobs: MocapJob[], nowMs: number) {
+      const t0 = performance.now()
+      backend.run(frame, jobs, nowMs).then((partial) => {
+        if (!running)
+          return
+        latencyMs = performance.now() - t0
+        lastPartial = { ...lastPartial, ...partial }
+      }).catch((err) => {
+        stop()
+        options?.onError?.(err)
+      })
+    }
+
+    const tick = () => {
       try {
         if (!running)
           return
@@ -101,20 +119,17 @@ export function createMocapEngine(backend: MocapBackend, initialConfig: MocapCon
         const frame = source.getFrame()
         const now = performance.now()
 
-        // Skip this frame if the backend is still busy.
-        if (backend.isBusy()) {
+        if (!backend.isBusy()) {
+          const jobs = scheduler.plan(now)
+          if (jobs.length > 0)
+            dispatchInference(frame, jobs, now)
+        }
+        else {
           droppedFrames++
-          rafId = requestAnimationFrame(tick)
-          return
         }
 
-        const jobs = scheduler.plan(now)
-        const t0 = performance.now()
-        const partial = jobs.length > 0 ? await backend.run(frame, jobs, now) : {}
-        const latencyMs = performance.now() - t0
-
-        lastPartial = { ...lastPartial, ...partial }
-
+        // Emit latest state every tick so consumers always get fresh quality
+        // metrics even when no new perception data arrived this frame.
         onState({
           t: now,
           ...lastPartial,
@@ -130,7 +145,6 @@ export function createMocapEngine(backend: MocapBackend, initialConfig: MocapCon
         rafId = requestAnimationFrame(tick)
       }
       catch (err) {
-        // Stop the loop to avoid spamming errors; consumers can restart.
         stop()
         options?.onError?.(err)
       }

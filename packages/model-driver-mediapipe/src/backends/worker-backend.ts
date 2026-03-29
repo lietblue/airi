@@ -4,8 +4,6 @@
 import type { MocapBackend, MocapConfig, MocapJob, PerceptionPartial } from '../types'
 import type { WorkerRequest, WorkerResponse } from './worker-protocol'
 
-const TAG = '[WorkerBackend]'
-
 export function createWorkerBackend(): MocapBackend {
   let worker: Worker | null = null
   let busy = false
@@ -28,7 +26,6 @@ export function createWorkerBackend(): MocapBackend {
 
   function handleMessage(event: MessageEvent<WorkerResponse>) {
     const msg = event.data
-    console.debug(TAG, 'recv', msg.type, 'id=', msg.id, 'error' in msg && msg.error ? `ERROR: ${msg.error}` : 'ok')
     const entry = pending.get(msg.id)
     if (!entry)
       return
@@ -48,7 +45,7 @@ export function createWorkerBackend(): MocapBackend {
   }
 
   function handleError(e: ErrorEvent) {
-    console.error(TAG, 'Worker error event:', e.message, e.filename, e.lineno)
+    console.error('[WorkerBackend] Worker error:', e.message)
     for (const [, entry] of pending)
       entry.reject(new Error(`Worker crashed: ${e.message}`))
     pending.clear()
@@ -57,20 +54,16 @@ export function createWorkerBackend(): MocapBackend {
 
   async function init(config: MocapConfig): Promise<void> {
     if (!worker) {
-      console.debug(TAG, 'Creating worker...')
       worker = new Worker(
         new URL('./mediapipe-worker.ts', import.meta.url),
         { type: 'module' },
       )
       worker.addEventListener('message', handleMessage)
       worker.addEventListener('error', handleError)
-      console.debug(TAG, 'Worker created')
     }
 
     const id = nextId++
-    console.debug(TAG, 'Sending init, id=', id)
     await request({ type: 'init', id, config })
-    console.debug(TAG, 'Init done')
   }
 
   function isBusy(): boolean {
@@ -98,7 +91,6 @@ export function createWorkerBackend(): MocapBackend {
   }
 
   function dispose() {
-    console.debug(TAG, 'Disposing worker')
     if (worker) {
       worker.terminate()
       worker = null
