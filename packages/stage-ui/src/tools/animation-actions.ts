@@ -24,8 +24,8 @@ const tools = [
 
   tool({
     name: 'airi_perform_action',
-    description: 'Perform an animation action. Use airi_list_actions first to get the available action IDs. The animation will play once (or loop for idle) and then return to idle automatically.',
-    execute: async ({ id }) => {
+    description: 'Perform an animation action. Use airi_list_actions first to get the available action IDs. You can control how long the animation plays with the duration parameter.',
+    execute: async ({ id, duration }) => {
       const store = useAnimationActionsStore()
       const action = store.actions.find(a => a.id === id)
       if (!action)
@@ -33,7 +33,7 @@ const tools = [
       if (!action.enabled)
         return { success: false, error: `Action "${id}" is disabled.` }
 
-      store.playAction(id, 'tool')
+      store.playAction(id, 'tool', duration)
       return {
         success: true,
         action: {
@@ -42,10 +42,12 @@ const tools = [
           description: action.description,
           durationMs: action.durationMs,
         },
+        duration,
       }
     },
     parameters: z.object({
       id: z.string().describe('The action ID to perform (from airi_list_actions)'),
+      duration: z.number().optional().describe('Controls playback duration: omit or undefined = use action default, 0 = play once to natural end then return to idle, -1 = loop indefinitely, >0 = play for that many milliseconds then return to idle'),
     }).strict(),
   }),
 

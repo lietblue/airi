@@ -12,6 +12,12 @@ import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, reactive, ref } from 'vue'
 
+function formatDuration(ms?: number) {
+  if (ms === undefined)
+    return '—'
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
 const VRMA_EXT_RE = /\.vrma$/i
 
 const animationActionsStore = useAnimationActionsStore()
@@ -235,6 +241,9 @@ onMounted(async () => {
                     Name
                   </th>
                   <th class="px-4 py-2 font-medium">
+                    Duration
+                  </th>
+                  <th class="px-4 py-2 font-medium">
                     Type
                   </th>
                   <th class="px-4 py-2 font-medium">
@@ -281,6 +290,9 @@ onMounted(async () => {
                         {{ anim.name }}
                       </span>
                     </div>
+                  </td>
+                  <td class="px-4 py-2 text-xs text-neutral-500">
+                    {{ formatDuration(anim.durationMs) }}
                   </td>
                   <td class="px-4 py-2">
                     <span
