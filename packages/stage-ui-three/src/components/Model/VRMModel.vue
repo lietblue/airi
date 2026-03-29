@@ -870,13 +870,29 @@ async function reloadAnimation() {
       newAction.clampWhenFinished = false
     }
 
+    // Reset hips to rest position before starting the new animation so any
+    // position drift from the previous clip doesn't carry over.
+    const hipNode = vrm.value.humanoid?.getNormalizedBoneNode('hips')
+    const hipsRestPos = hipNode ? hipNode.position.clone() : null
+
     const prevAction = currentAnimationAction.value
     if (prevAction && prevAction !== newAction) {
       // Crossfade from the previous action into the new one
       newAction.play()
       prevAction.crossFadeTo(newAction, ANIMATION_CROSSFADE_DURATION, true)
+
+      // After the crossfade completes, fully stop the old action and snap
+      // hips back to rest position to prevent accumulated drift.
+      setTimeout(() => {
+        prevAction.stop()
+        if (hipNode && hipsRestPos)
+          hipNode.position.copy(hipsRestPos)
+      }, ANIMATION_CROSSFADE_DURATION * 1000)
     }
     else {
+      // No previous action — snap hips to rest before playing
+      if (hipNode && hipsRestPos)
+        hipNode.position.copy(hipsRestPos)
       newAction.play()
     }
 
