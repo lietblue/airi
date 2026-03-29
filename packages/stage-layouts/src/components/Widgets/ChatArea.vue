@@ -326,13 +326,13 @@ async function stopListening() {
   try {
     console.info('[ChatArea] Stopping transcription...')
 
-    // Clear auto-send timeout
+    // Save pending text before clearing the timeout/buffer
+    const bufferedText = pendingAutoSendText.value.trim()
     clearPendingAutoSend()
 
     // Send any pending text immediately if auto-send is enabled
-    if (autoSendEnabled.value && pendingAutoSendText.value.trim()) {
-      const textToSend = pendingAutoSendText.value.trim()
-      pendingAutoSendText.value = ''
+    if (autoSendEnabled.value && bufferedText) {
+      const textToSend = bufferedText
       try {
         const providerConfig = providersStore.getProviderConfig(activeProvider.value)
         await ingest(textToSend, {

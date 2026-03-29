@@ -336,15 +336,28 @@ speechPipeline.on('onSpecial', (segment) => {
     playSpecialToken(segment.special)
 })
 
+// NOTICE: Delay setting nowSpeaking to false so that back-to-back TTS segments
+// don't cause a brief false→true flicker. If the next segment starts within the
+// grace window the flag stays true, preventing downstream watchers (auto-ASR,
+// chatActive suppression) from firing prematurely between segments.
+let speakingEndTimer: ReturnType<typeof setTimeout> | undefined
+
 playbackManager.onEnd(({ item }) => {
   if (item.special)
     playSpecialToken(item.special)
 
-  nowSpeaking.value = false
-  mouthOpenSize.value = 0
+  speakingEndTimer = setTimeout(() => {
+    nowSpeaking.value = false
+    mouthOpenSize.value = 0
+    speakingEndTimer = undefined
+  }, 200)
 })
 
 playbackManager.onStart(({ item }) => {
+  if (speakingEndTimer) {
+    clearTimeout(speakingEndTimer)
+    speakingEndTimer = undefined
+  }
   nowSpeaking.value = true
   // NOTICE: postCaption and postPresent may throw errors if the BroadcastChannel is closed
   // (e.g., when navigating away from the page). We wrap these in try-catch to prevent
@@ -623,6 +636,8 @@ function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, r
 onUnmounted(() => {
   if (idleRotationTimer)
     clearInterval(idleRotationTimer)
+  if (speakingEndTimer)
+    clearTimeout(speakingEndTimer)
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
   viewUpdateCleanups.forEach(dispose => dispose?.())

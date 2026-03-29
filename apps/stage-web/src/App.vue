@@ -59,6 +59,11 @@ watch(() => presenceStore.pendingWelcome, async (msg) => {
 const speakingStore = useSpeakingStore()
 const chatOrchestrator = useChatOrchestratorStore()
 
+// NOTICE: autoAsrActivatedMic is set only when we programmatically enable the mic via
+// pendingAutoAsr consumption. This avoids false positives when the user manually toggles
+// the microphone while autoAsrAfterMessage is enabled.
+let autoAsrActivatedMic = false
+
 // Emit a hand-raised message as a fake assistant reply: TTS + chat history, no LLM round-trip
 watch(() => handVisionStore.pendingMessage, async (msg) => {
   if (!msg)
@@ -88,11 +93,16 @@ watch(() => handVisionStore.pendingMessage, async (msg) => {
   await characterStore.emitTextOutput(msg)
 
   // Fallback: if TTS never started (no provider, error, etc.), nowSpeaking never fires.
-  // Directly activate ASR here if pendingAutoAsr is still pending after emitTextOutput resolves.
-  if (handVisionStore.pendingAutoAsr && !speakingStore.nowSpeaking) {
-    handVisionStore.pendingAutoAsr = false
-    if (!settingsAudioDeviceStore.enabled)
-      settingsAudioDeviceStore.enabled = true
+  // Wait a short grace period for the speech pipeline to begin playback before assuming
+  // TTS is absent — emitTextOutput only queues text; actual playback starts asynchronously.
+  if (handVisionStore.pendingAutoAsr) {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    if (handVisionStore.pendingAutoAsr && !speakingStore.nowSpeaking) {
+      handVisionStore.pendingAutoAsr = false
+      autoAsrActivatedMic = true
+      if (!settingsAudioDeviceStore.enabled)
+        settingsAudioDeviceStore.enabled = true
+    }
   }
 })
 
@@ -112,23 +122,13 @@ watch(
   (speaking, wasSpeaking) => {
     if (wasSpeaking && !speaking && handVisionStore.pendingAutoAsr) {
       handVisionStore.pendingAutoAsr = false
+      autoAsrActivatedMic = true
       if (!settingsAudioDeviceStore.enabled) {
         settingsAudioDeviceStore.enabled = true
       }
     }
   },
 )
-
-// After auto-ASR triggered conversation completes, turn mic back off
-// NOTICE: This watches for chatOrchestrator.sending going false after an auto-ASR turn.
-// We track whether the mic was auto-enabled so we only disable it if we turned it on.
-let autoAsrActivatedMic = false
-watch(() => settingsAudioDeviceStore.enabled, (enabled) => {
-  // Track when we auto-enable the mic (pendingAutoAsr was just consumed)
-  if (enabled && !autoAsrActivatedMic && handVisionStore.autoAsrAfterMessage) {
-    autoAsrActivatedMic = true
-  }
-})
 
 watch(() => chatOrchestrator.sending, (sending, wasSending) => {
   // After a send completes and we auto-activated the mic, turn it off
