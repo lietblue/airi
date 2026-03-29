@@ -42,7 +42,9 @@ const settingsAudioDeviceStore = useSettingsAudioDevice()
 const chatSessionStore = useChatSessionStore()
 const { state: presenceState } = storeToRefs(presenceStore)
 
-// Speak a welcome message and play the configured welcome action when someone appears
+// Speak a welcome message and play the configured welcome action when someone appears.
+// The welcome action uses source 'welcome' which locks the animation so speaking/thinking
+// cannot interrupt it — the animation plays to completion before the speaking cycle takes over.
 watch(() => presenceStore.pendingWelcome, async (msg) => {
   if (!msg)
     return
@@ -50,7 +52,16 @@ watch(() => presenceStore.pendingWelcome, async (msg) => {
   if (presenceStore.welcomeActionTag) {
     const id = animationActionsStore.pickRandomFromTag(presenceStore.welcomeActionTag)
     if (id)
-      animationActionsStore.playAction(id, 'tool')
+      animationActionsStore.playAction(id, 'welcome')
+  }
+  // Add as an assistant message to the active chat session so it appears in the chat UI
+  const sessionId = chatSessionStore.activeSessionId
+  if (sessionId) {
+    const messages = chatSessionStore.sessionMessages[sessionId]
+    if (messages) {
+      messages.push({ role: 'assistant', content: msg, slices: [], tool_results: [], createdAt: Date.now() })
+      chatSessionStore.persistSessionMessages(sessionId)
+    }
   }
   await characterStore.emitTextOutput(msg)
 })
@@ -178,6 +189,16 @@ const { showingSetup } = storeToRefs(onboardingStore)
 const { isDark } = useTheme()
 const cardStore = useAiriCardStore()
 const analyticsStore = useSharedAnalyticsStore()
+
+// --- Presence Detection: reset with I key ---
+const { i: iKey } = useMagicKeys()
+whenever(iKey, () => {
+  const el = document.activeElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable))
+    return
+  if (presenceStore.enabled)
+    presenceStore.resetState()
+})
 
 // --- Green Screen Mode: toggle with H key ---
 const greenScreenStore = useSettingsGreenScreen()

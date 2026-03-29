@@ -71,12 +71,14 @@ const { mouthOpenSize } = storeToRefs(useSpeakingStore())
 const animationActionsStore = useAnimationActionsStore()
 const { currentActionUrl, currentBgMusicUrl, currentBgVideoUrl, currentFgVideoUrl, thinkingUseSpeakingActions, isCurrentActionLoop, isCurrentActionIdle, currentActionSource } = storeToRefs(animationActionsStore)
 
-// NOTICE: During the speaking cycle, force all animations to play once (LoopOnce) regardless
-// of the action's loop setting. This ensures handleAnimationComplete fires so the cycle can
-// pick the next speaking animation. Without this, looping animations would play indefinitely
-// and block the speaking animation rotation.
+// NOTICE: During the speaking cycle and welcome actions, force all animations to play once
+// (LoopOnce) regardless of the action's loop setting. This ensures handleAnimationComplete
+// fires so: (1) speaking cycle can pick the next animation, (2) welcome action lock is
+// released when the animation finishes. Without this, looping animations would play
+// indefinitely and block rotation/unlock.
 const effectiveLoop = computed(() => {
-  if (currentActionSource.value === 'speaking-cycle')
+  const src = currentActionSource.value
+  if (src === 'speaking-cycle' || src === 'welcome')
     return false
   return isCurrentActionLoop.value
 })
@@ -514,6 +516,8 @@ function playNextSpeakingAction() {
  * continue with the speaking cycle so the character keeps looking animated.
  */
 function handleAnimationComplete() {
+  // Release the action lock (e.g. from welcome actions) so the speaking pipeline can proceed
+  animationActionsStore.unlockAction()
   if (isSpeaking.value)
     playNextSpeakingAction()
   else
@@ -564,6 +568,7 @@ chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
   speakingAnimationStarted = false
   if (stageModelRenderer.value === 'vrm') {
     const src = animationActionsStore.currentActionSource
+    // Don't interrupt welcome actions — let them finish naturally via handleAnimationComplete
     if (src === 'speaking-cycle' || src === 'idle-rotation')
       animationActionsStore.stopAction()
   }

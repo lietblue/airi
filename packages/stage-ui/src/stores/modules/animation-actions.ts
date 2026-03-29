@@ -72,9 +72,10 @@ type BuiltinOverrides = Record<string, {
  * - `'idle-rotation'`  — automatic idle cycling
  * - `'speaking-cycle'` — speaking pipeline (thinking / speaking animations)
  * - `'tool'`           — triggered by an AI tool call or external system
+ * - `'welcome'`        — presence welcome animation (not interrupted by speaking/thinking)
  * - `'user'`           — direct user interaction
  */
-export type ActionSource = 'idle-rotation' | 'speaking-cycle' | 'tool' | 'user'
+export type ActionSource = 'idle-rotation' | 'speaking-cycle' | 'tool' | 'welcome' | 'user'
 
 interface StoredCustomAction {
   id: string
@@ -159,6 +160,18 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
   const currentActionId = ref<string>('idle_loop')
   /** Tracks who triggered the currently playing action. */
   const currentActionSource = ref<ActionSource>('idle-rotation')
+  /**
+   * When true, only 'user' and 'tool' sources can override the current action.
+   * Set when a welcome action starts; cleared when the animation completes or stopAction is called.
+   */
+  const actionLocked = ref(false)
+  /**
+   * When set, overrides the action's own `loop` property for the current playback.
+   * `null` means use the action's default. Set by `playAction` when a duration param is provided.
+   */
+  const currentActionLoopOverride = ref<boolean | null>(null)
+  /** Handle for the auto-stop timer when playing with a positive duration. */
+  let durationTimerHandle: ReturnType<typeof setTimeout> | null = null
   const loading = ref(false)
 
   /** When true, the thinking phase picks from speaking actions instead of hardcoding 'thinking'. */
@@ -182,9 +195,11 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     actions.value.find(a => a.id === currentActionId.value),
   )
 
-  /** Whether the currently playing action should loop. Defaults true when no action is active. */
+  /** Whether the currently playing action should loop. Respects override from playAction duration param. */
   const isCurrentActionLoop = computed(() =>
-    currentAction.value?.loop ?? true,
+    currentActionLoopOverride.value !== null
+      ? currentActionLoopOverride.value
+      : (currentAction.value?.loop ?? true),
   )
 
   /** Whether the currently playing action is in the idle pool. */
@@ -586,19 +601,78 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
    * Play an action by id, optionally recording who triggered it.
    * The `source` is used downstream (e.g. Stage.vue) to decide whether the speaking
    * pipeline should stop the action when speech ends.
+   *
+   * @param duration Controls playback duration:
+   *   - `undefined` — use the action's own loop setting (default)
+   *   - `0`  — play once to natural end, then return to idle (forces loop=false)
+   *   - `-1` — loop indefinitely (forces loop=true)
+   *   - `>0` — play for N milliseconds, then return to idle (forces loop=true so animation repeats until timer fires)
    */
-  function playAction(id: string, source: ActionSource = 'user') {
+  function playAction(id: string, source: ActionSource = 'user', duration?: number) {
     const action = actions.value.find(a => a.id === id)
     if (!action || !action.enabled) {
       console.warn(`[animation-actions] action "${id}" not found or disabled`)
       return
     }
+
+    // NOTICE: When a welcome action is playing (actionLocked), only 'user' and 'tool'
+    // sources can interrupt it. Speaking-cycle and idle-rotation are rejected so the
+    // welcome animation plays to completion before the speaking pipeline takes over.
+    if (actionLocked.value && source !== 'user' && source !== 'tool' && source !== 'welcome') {
+      return
+    }
+
+    // Clear any previous duration timer
+    if (durationTimerHandle !== null) {
+      clearTimeout(durationTimerHandle)
+      durationTimerHandle = null
+    }
+
     currentActionId.value = id
     currentActionSource.value = source
+    actionLocked.value = source === 'welcome'
+
+    // Apply loop override based on duration
+    if (duration === undefined) {
+      currentActionLoopOverride.value = null
+    }
+    else if (duration === 0) {
+      // Play once to natural end — animationComplete will fire and stopAction is called by Stage
+      currentActionLoopOverride.value = false
+    }
+    else if (duration === -1) {
+      // Loop indefinitely
+      currentActionLoopOverride.value = true
+    }
+    else if (duration > 0) {
+      // Play for N ms then auto-stop. Loop so the animation repeats until the timer fires.
+      currentActionLoopOverride.value = true
+      durationTimerHandle = setTimeout(() => {
+        durationTimerHandle = null
+        stopAction()
+      }, duration)
+    }
+  }
+
+  /**
+   * Release the action lock set by welcome actions. Called when the locked animation
+   * finishes (via handleAnimationComplete in Stage.vue) so the speaking pipeline can
+   * take over afterward.
+   */
+  function unlockAction() {
+    actionLocked.value = false
   }
 
   /** Stop the current action and return to a randomly selected idle action. */
   function stopAction() {
+    // Clear duration timer and loop override from the previous playAction call
+    if (durationTimerHandle !== null) {
+      clearTimeout(durationTimerHandle)
+      durationTimerHandle = null
+    }
+    currentActionLoopOverride.value = null
+    actionLocked.value = false
+
     currentActionId.value = pickRandomIdle()
     currentActionSource.value = 'idle-rotation'
   }
@@ -625,11 +699,14 @@ export const useAnimationActionsStore = defineStore('animation-actions', () => {
     isCurrentActionLoop,
     isCurrentActionIdle,
 
+    actionLocked,
+
     loadCustomActionsFromIndexedDB,
     addCustomAction,
     removeCustomAction,
     updateAction,
     playAction,
+    unlockAction,
     stopAction,
     pickRandomIdle,
     pickRandomSpeakingAction,
