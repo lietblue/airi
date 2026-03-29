@@ -26,37 +26,34 @@ export { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
 const BONE_NAME_RE = /\.bones\[(.*)\]/
 
 /**
- * Detect if a position track uses a mixed format where the first frame stores
- * absolute position but subsequent frames store small deltas (relative offsets).
+ * Detect and fix a position track where frame 0 is an outlier.
  *
- * NOTICE: Some BVH exporters produce this non-standard layout — frame 1 has
- * the absolute hips position (≈ OFFSET) while frame 2+ drops to near-zero
- * because they represent incremental movement. We detect this by checking if
- * the Y value between frame 0 and frame 1 drops by more than 50% of frame 0's
- * magnitude, and frame 1's Y is close to zero.
+ * NOTICE: Some BVH exporters encode frame 0 as the absolute hips position
+ * while frame 1+ store incremental deltas. Three.js BVHLoader adds the bone
+ * OFFSET to ALL frames, so frame 0 ends up double-offset (absolute + OFFSET)
+ * while frame 1+ become correct (delta + OFFSET ≈ absolute). This makes
+ * frame 0 a large outlier. We detect this by comparing frame 0 Y to the
+ * median of frames 1..N and snapping frame 0 to frame 1 when it's an outlier.
  */
-function detectDeltaFrames(values: Float32Array): boolean {
-  if (values.length < 6)
-    return false
-  const y0 = values[1]
-  const y1 = values[4]
-  // First frame has a meaningful standing-height Y and second frame's Y drops
-  // to < 10% of it — strong signal of delta encoding. The ratio-based check
-  // works regardless of scale (cm, m, etc.). The y0 != 0 guard avoids division
-  // edge cases when the first frame is exactly at origin.
-  return y0 !== 0 && Math.abs(y1) < Math.abs(y0) * 0.1
-}
+function fixOutlierFirstFrame(values: Float32Array): void {
+  if (values.length < 9)
+    return
 
-/**
- * Convert a delta-frame position track to absolute positions by accumulating
- * deltas on top of the first frame's absolute position.
- */
-function accumulateDeltaFrames(values: Float32Array): void {
-  // Frame 0 is already absolute; accumulate from frame 1 onward
-  for (let i = 3; i < values.length; i += 3) {
-    values[i] = values[i - 3] + values[i]
-    values[i + 1] = values[i - 2] + values[i + 1]
-    values[i + 2] = values[i - 1] + values[i + 2]
+  const y0 = values[1]
+  // Sample a few early frames (1-4) to get a stable reference
+  const sampleCount = Math.min(4, (values.length / 3) - 1)
+  let sumY = 0
+  for (let i = 0; i < sampleCount; i++)
+    sumY += values[(i + 1) * 3 + 1]
+  const avgY = sumY / sampleCount
+
+  // Frame 0 is an outlier if it deviates from the average by more than 50%
+  // of the average's magnitude (and the average is non-zero)
+  if (avgY !== 0 && Math.abs(y0 - avgY) > Math.abs(avgY) * 0.5) {
+    // Snap frame 0 to frame 1 to remove the double-offset
+    values[0] = values[3]
+    values[1] = values[4]
+    values[2] = values[5]
   }
 }
 
@@ -121,10 +118,10 @@ export async function convertBVHToVRMA(
       const scaled = track.clone()
       scaled.values = Float32Array.from(track.values, v => v * scale)
 
-      // NOTICE: Some BVH exporters write frame 0 as absolute position and
-      // frame 1+ as incremental deltas. Detect and fix by accumulating.
-      if (detectDeltaFrames(scaled.values))
-        accumulateDeltaFrames(scaled.values)
+      // NOTICE: Some BVH exporters write frame 0 as absolute position while
+      // frame 1+ are deltas. Three.js BVHLoader adds OFFSET to all frames,
+      // making frame 0 double-offset. Detect and snap frame 0 to frame 1.
+      fixOutlierFirstFrame(scaled.values)
 
       // Subtract hips rest-pose offset so values become relative to rest.
       // NOTICE: This matches the original vrm-c/bvh2vrma approach. The playback
