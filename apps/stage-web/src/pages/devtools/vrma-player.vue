@@ -325,7 +325,7 @@ onMounted(async () => {
       </div>
 
       <!-- Right: Preview -->
-      <div class="relative overflow-hidden border border-neutral-300/40 rounded-2xl dark:border-neutral-700/40">
+      <div class="relative sticky top-4 self-start overflow-hidden border border-neutral-300/40 rounded-2xl dark:border-neutral-700/40">
         <!-- Now Playing badge -->
         <div class="absolute left-3 top-3 z-10 rounded-lg bg-black/50 px-2 py-1 text-xs text-white backdrop-blur">
           <div class="flex items-center gap-1">
@@ -334,7 +334,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="h-full min-h-80 lg:min-h-120">
+        <div class="h-80 lg:h-120">
           <ThreeScene
             v-if="stageModelRenderer === 'vrm'"
             :model-src="stageModelSelectedUrl"
