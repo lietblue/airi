@@ -1,0 +1,16 @@
+{
+  "name": "@proj-airi/pr-triage-agent",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated dependency island for the opencode-based triage agent. Lives in the GitHub Actions job that holds LLM_API_KEY and has zero GitHub permissions; therefore deliberately ships *no* @octokit / network-API libraries to minimise the attack surface if a transitive dep is compromised.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "render-config": "node render-opencode-config.mjs"
+  },
+  "dependencies": {
+    "opencode-ai": "1.14.19"
+  }
+}

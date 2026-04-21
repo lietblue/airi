@@ -69,8 +69,10 @@ optionally `provider`, `model`, `base_url`.
 
 ## Security model (short)
 
-- `agent` job has `permissions: {}` and no checkout — it cannot reach the repo
-  even if it wants to.
+- `agent` job has `permissions: {}` and no `GITHUB_TOKEN` — it cannot reach the
+  repo via the API even if it wants to. It does a sparse `actions/checkout` of
+  its own scripts with `persist-credentials: false` so even `git push` has no
+  credential to use.
 - The PR's source code is **never executed**. It enters the pipeline only as
   data inside `pr/changes/*.diff` and `pr/messages/`.
 - Asset downloads in `collect.mjs` are restricted to `*.githubusercontent.com`
@@ -79,3 +81,34 @@ optionally `provider`, `model`, `base_url`.
   GitHub API call. Anything outside the allowlist is silently dropped.
 - The label set is also hard-capped (default 12) so a runaway agent cannot
   spam the PR.
+
+### Supply-chain hardening
+
+- Two **physically separated dependency islands** with their own pinned
+  `pnpm-lock.yaml`:
+  - [`scripts/pr-triage/`](../../scripts/pr-triage) — `@octokit/rest`,
+    `js-yaml`, `mime-types`. Loaded by `collect` + `apply` jobs (which hold
+    `GITHUB_TOKEN`). Ships zero LLM SDKs.
+  - [`scripts/pr-triage-agent/`](../../scripts/pr-triage-agent) —
+    `opencode-ai`. Loaded by the `agent` job (which holds `LLM_API_KEY`).
+    Ships zero GitHub SDKs.
+  Compromise of one tree cannot reach the other secret.
+- All three jobs install with
+  `pnpm install --frozen-lockfile --ignore-scripts --ignore-workspace --prod`:
+  - `--frozen-lockfile`: any version drift vs the committed lockfile fails CI.
+  - `--ignore-scripts`: no `postinstall` / `prepare` script from any dep can
+    execute on the runner. (This is the most common supply-chain attack vector;
+    none of these deps actually need lifecycle scripts.)
+  - `--ignore-workspace`: the triage installs are standalone, not affected by
+    the monorepo root's `catalog:` / `overrides:` / patches.
+- The `opencode` CLI is run from the local `node_modules/.bin/`, never via
+  `npm i -g opencode-ai@latest` or `npx`. The exact version executed is
+  whatever `scripts/pr-triage-agent/pnpm-lock.yaml` says.
+
+To upgrade either island:
+
+```bash
+cd scripts/pr-triage          # or scripts/pr-triage-agent
+pnpm update --ignore-workspace --latest
+# review the new pnpm-lock.yaml diff carefully, then commit it
+```

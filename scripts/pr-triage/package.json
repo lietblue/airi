@@ -3,18 +3,17 @@
   "type": "module",
   "version": "0.0.0",
   "private": true,
-  "description": "Standalone scripts for the in-repo PR triage workflow. Not part of the workspace build.",
+  "description": "GitHub-side scripts for the in-repo PR triage workflow (collect + apply). Lives in the jobs that hold GITHUB_TOKEN; deliberately ships *no* opencode / LLM SDKs to minimise the attack surface if a transitive dep is compromised.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "collect": "node collect.mjs",
-    "render-config": "node render-opencode-config.mjs",
     "apply-labels": "node apply-labels.mjs"
   },
   "dependencies": {
-    "@octokit/rest": "^21.0.2",
-    "js-yaml": "^4.1.0",
-    "mime-types": "^3.0.0"
+    "@octokit/rest": "22.0.1",
+    "js-yaml": "4.1.0",
+    "mime-types": "3.0.2"
   }
 }

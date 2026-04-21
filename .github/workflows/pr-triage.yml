@@ -8,6 +8,16 @@ name: PR Triage
 # prompt-injection from a PR cannot exfiltrate repo credentials. It can only
 # write to ./labels.json, which the apply job validates against
 # .github/pr-triage/labels.allowlist.json before pushing.
+#
+# Supply-chain hardening:
+#   * scripts/pr-triage and scripts/pr-triage-agent are TWO physically separate
+#     dependency islands, each with its own pnpm-lock.yaml. The job that holds
+#     GITHUB_TOKEN never installs opencode-ai's transitive deps, and the job
+#     that holds LLM_API_KEY never installs @octokit. Compromise of one tree
+#     does not reach the other secret.
+#   * pnpm install always runs with --frozen-lockfile (no version drift),
+#     --ignore-scripts (no postinstall code execution from any dep), and
+#     --ignore-workspace (don't pick up the monorepo root's catalog/overrides).
 
 on:
   pull_request_target:
@@ -40,6 +50,9 @@ concurrency:
   group: pr-triage-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
+env:
+  PNPM_VERSION: '10.33.0'
+
 jobs:
   collect:
     name: Collect PR data
@@ -64,14 +77,22 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: pnpm
+          cache-dependency-path: scripts/pr-triage/pnpm-lock.yaml
 
       - name: Install collect script dependencies
         working-directory: scripts/pr-triage
-        run: npm install --no-audit --no-fund --omit=dev --no-package-lock
+        run: pnpm install --frozen-lockfile --ignore-scripts --ignore-workspace --prod
 
       - name: Collect PR bundle
         id: collect
@@ -86,16 +107,16 @@ jobs:
         run: node scripts/pr-triage/collect.mjs
 
       - name: Stage agent bundle
+        # Bundle contains ONLY PR-specific data: per-PR diffs, comments,
+        # downloaded assets, plus the (repo-controlled) prompt and allowlist.
+        # All scripts and config the agent needs come from a fresh checkout in
+        # the agent job, NOT from this artifact, so a malicious PR can never
+        # inject executables here.
         run: |
           mkdir -p bundle
           cp -r pr bundle/pr
           cp prompt.md bundle/prompt.md
           cp labels.allowlist.json bundle/labels.allowlist.json
-          mkdir -p bundle/.github/pr-triage
-          cp -r .github/pr-triage/providers bundle/.github/pr-triage/providers
-          cp .github/pr-triage/agent.json bundle/.github/pr-triage/agent.json
-          mkdir -p bundle/scripts/pr-triage
-          cp scripts/pr-triage/render-opencode-config.mjs bundle/scripts/pr-triage/render-opencode-config.mjs
 
       - name: Upload PR bundle
         uses: actions/upload-artifact@v4
@@ -126,33 +147,68 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout base ref (agent scripts + provider presets)
+        # Base-ref checkout is safe even on pull_request_target: this fetches the
+        # repository's own committed code at the workflow's ref, NOT the PR head.
+        # persist-credentials: false strips the GITHUB_TOKEN that setup writes to
+        # .git/config, so even if downstream code calls `git push` it has nothing.
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts/pr-triage-agent
+            .github/pr-triage/providers
+            .github/pr-triage/agent.json
+          sparse-checkout-cone-mode: false
+
       - name: Download PR bundle
         uses: actions/download-artifact@v4
         with:
           name: pr-bundle
           path: bundle
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: pnpm
+          cache-dependency-path: scripts/pr-triage-agent/pnpm-lock.yaml
 
-      - name: Install opencode CLI
-        run: npm install -g opencode-ai@latest
+      - name: Install opencode (frozen, no scripts)
+        # --frozen-lockfile: no version drift vs the committed pnpm-lock.yaml.
+        # --ignore-scripts: opencode-ai's transitive deps cannot run postinstall
+        #   code in the runner that holds LLM_API_KEY.
+        # --ignore-workspace: don't follow the monorepo root's pnpm-workspace.yaml.
+        # --prod: skip devDependencies (none here today, but keeps it tight).
+        working-directory: scripts/pr-triage-agent
+        run: pnpm install --frozen-lockfile --ignore-scripts --ignore-workspace --prod
 
       - name: Render opencode config
         working-directory: bundle
         env:
-          PROVIDERS_DIR: ${{ github.workspace }}/bundle/.github/pr-triage/providers
-          AGENT_FILE: ${{ github.workspace }}/bundle/.github/pr-triage/agent.json
-        run: node scripts/pr-triage/render-opencode-config.mjs
+          PROVIDERS_DIR: ${{ github.workspace }}/.github/pr-triage/providers
+          AGENT_FILE: ${{ github.workspace }}/.github/pr-triage/agent.json
+        run: node ${{ github.workspace }}/scripts/pr-triage-agent/render-opencode-config.mjs
 
       - name: Run opencode
         working-directory: bundle
         timeout-minutes: 10
+        env:
+          OPENCODE_BIN: ${{ github.workspace }}/scripts/pr-triage-agent/node_modules/.bin/opencode
         run: |
           set -o pipefail
-          opencode run \
+          if [ ! -x "${OPENCODE_BIN}" ]; then
+            echo "::error::opencode binary not found at ${OPENCODE_BIN} after frozen install"
+            exit 1
+          fi
+          "${OPENCODE_BIN}" run \
             --agent triage \
             -m "${PROVIDER}/${MODEL}" \
             "$(cat prompt.md)" \
@@ -193,15 +249,27 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
+          sparse-checkout: |
+            scripts/pr-triage
+            .github/pr-triage/labels.allowlist.json
+          sparse-checkout-cone-mode: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: pnpm
+          cache-dependency-path: scripts/pr-triage/pnpm-lock.yaml
 
       - name: Install apply script dependencies
         working-directory: scripts/pr-triage
-        run: npm install --no-audit --no-fund --omit=dev --no-package-lock
+        run: pnpm install --frozen-lockfile --ignore-scripts --ignore-workspace --prod
 
       - name: Download labels artifact
         uses: actions/download-artifact@v4
