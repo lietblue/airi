@@ -1,0 +1,10 @@
+{
+  "id": "anthropic",
+  "name": "Anthropic",
+  "npm": "@ai-sdk/anthropic",
+  "options": {
+    "apiKey": "{env:LLM_API_KEY}"
+  },
+  "default_model": "claude-sonnet-4-5",
+  "known_models": ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]
+}

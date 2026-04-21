@@ -1,0 +1,17 @@
+# Default configuration for the in-repo PR triage workflow.
+#
+# This file is read by the `collect` job and propagated as job outputs
+# to the `agent` job. It applies to `pull_request_target` triggers and
+# also serves as the default for `workflow_dispatch` inputs.
+#
+# To override per-run, dispatch the workflow manually from the Actions
+# tab and fill in the `provider` / `model` / `base_url` inputs.
+
+# Provider preset id (must match a file under .github/pr-triage/providers/).
+provider: deepseek
+
+# Model id passed to opencode as `<provider>/<model>`.
+model: deepseek-chat
+
+# Optional extra models to register with the provider (rarely needed).
+extra_models: []

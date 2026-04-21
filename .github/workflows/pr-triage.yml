@@ -1,0 +1,219 @@
+name: PR Triage
+
+# Three-job pipeline replacing the gh-aw / Copilot CLI machinery:
+#
+#   collect (read GH) -> agent (no GH, only LLM_API_KEY) -> apply (write GH)
+#
+# The agent job has `permissions: {}` and never sees a usable GitHub token, so
+# prompt-injection from a PR cannot exfiltrate repo credentials. It can only
+# write to ./labels.json, which the apply job validates against
+# .github/pr-triage/labels.allowlist.json before pushing.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize, edited]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to triage
+        required: true
+        type: string
+      provider:
+        description: 'Provider preset id (file under .github/pr-triage/providers/, e.g. deepseek, openai, openrouter, anthropic, openai-compatible)'
+        required: false
+        default: ''
+        type: string
+      model:
+        description: 'Model id passed as `<provider>/<model>` to opencode'
+        required: false
+        default: ''
+        type: string
+      base_url:
+        description: 'Override LLM base URL (only used by the openai-compatible preset)'
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pr-triage-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    name: Collect PR data
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request_target' || !github.event.pull_request.draft || github.event.action == 'ready_for_review' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    outputs:
+      pr_number: ${{ steps.collect.outputs.pr_number }}
+      provider: ${{ steps.collect.outputs.provider }}
+      model: ${{ steps.collect.outputs.model }}
+      extra_models: ${{ steps.collect.outputs.extra_models }}
+    steps:
+      - name: Checkout base ref (workflow + scripts)
+        uses: actions/checkout@v4
+        with:
+          # Always check out the workflow's own ref (base branch on pull_request_target,
+          # default branch on workflow_dispatch). Never check out PR-supplied code into
+          # the workspace where collect/agent/apply scripts run.
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install collect script dependencies
+        working-directory: scripts/pr-triage
+        run: npm install --no-audit --no-fund --omit=dev --no-package-lock
+
+      - name: Collect PR bundle
+        id: collect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          OUT_DIR: ${{ github.workspace }}/pr
+          CONFIG_FILE: ${{ github.workspace }}/.github/pr-triage/config.yml
+          PROMPT_FILE: ${{ github.workspace }}/.github/pr-triage/prompt.md
+          LABELS_FILE: ${{ github.workspace }}/.github/pr-triage/labels.allowlist.json
+        run: node scripts/pr-triage/collect.mjs
+
+      - name: Stage agent bundle
+        run: |
+          mkdir -p bundle
+          cp -r pr bundle/pr
+          cp prompt.md bundle/prompt.md
+          cp labels.allowlist.json bundle/labels.allowlist.json
+          mkdir -p bundle/.github/pr-triage
+          cp -r .github/pr-triage/providers bundle/.github/pr-triage/providers
+          cp .github/pr-triage/agent.json bundle/.github/pr-triage/agent.json
+          mkdir -p bundle/scripts/pr-triage
+          cp scripts/pr-triage/render-opencode-config.mjs bundle/scripts/pr-triage/render-opencode-config.mjs
+
+      - name: Upload PR bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-bundle
+          path: bundle/
+          retention-days: 3
+          if-no-files-found: error
+
+  agent:
+    name: Run opencode triage agent
+    needs: collect
+    runs-on: ubuntu-latest
+    # CRITICAL: zero GitHub access. Even if the PR injects prompts that try to
+    # call gh / git / curl with the runner-injected token, there is none.
+    permissions: {}
+    env:
+      PROVIDER: ${{ inputs.provider || needs.collect.outputs.provider }}
+      MODEL: ${{ inputs.model || needs.collect.outputs.model }}
+      EXTRA_MODELS: ${{ needs.collect.outputs.extra_models }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ inputs.base_url || vars.LLM_BASE_URL }}
+    steps:
+      - name: Verify LLM_API_KEY is set
+        run: |
+          if [ -z "${LLM_API_KEY}" ]; then
+            echo "::error::LLM_API_KEY repository secret is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Download PR bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-bundle
+          path: bundle
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install opencode CLI
+        run: npm install -g opencode-ai@latest
+
+      - name: Render opencode config
+        working-directory: bundle
+        env:
+          PROVIDERS_DIR: ${{ github.workspace }}/bundle/.github/pr-triage/providers
+          AGENT_FILE: ${{ github.workspace }}/bundle/.github/pr-triage/agent.json
+        run: node scripts/pr-triage/render-opencode-config.mjs
+
+      - name: Run opencode
+        working-directory: bundle
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          opencode run \
+            --agent triage \
+            -m "${PROVIDER}/${MODEL}" \
+            "$(cat prompt.md)" \
+            2>&1 | tee /tmp/opencode.log
+          if [ ! -f labels.json ]; then
+            echo "::warning::agent did not write labels.json; defaulting to empty"
+            echo '{"labels":[]}' > labels.json
+          fi
+
+      - name: Upload labels artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-labels
+          path: bundle/labels.json
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Upload agent log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-log
+          path: /tmp/opencode.log
+          retention-days: 3
+          if-no-files-found: ignore
+
+  apply:
+    name: Validate and apply labels
+    needs: [collect, agent]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout base ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install apply script dependencies
+        working-directory: scripts/pr-triage
+        run: npm install --no-audit --no-fund --omit=dev --no-package-lock
+
+      - name: Download labels artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-labels
+          path: ${{ github.workspace }}/agent-out
+
+      - name: Apply labels
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.collect.outputs.pr_number }}
+          LABELS_JSON: ${{ github.workspace }}/agent-out/labels.json
+          ALLOWLIST_FILE: ${{ github.workspace }}/.github/pr-triage/labels.allowlist.json
+        run: node scripts/pr-triage/apply-labels.mjs

@@ -1,0 +1,15 @@
+{
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "npm": "@openrouter/ai-sdk-provider",
+  "options": {
+    "apiKey": "{env:LLM_API_KEY}"
+  },
+  "default_model": "anthropic/claude-sonnet-4.5",
+  "known_models": [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-haiku-4.5",
+    "deepseek/deepseek-chat",
+    "openai/gpt-4.1-mini"
+  ]
+}

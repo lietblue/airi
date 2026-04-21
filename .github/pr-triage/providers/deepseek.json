@@ -1,0 +1,11 @@
+{
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "npm": "@ai-sdk/openai-compatible",
+  "options": {
+    "baseURL": "https://api.deepseek.com/v1",
+    "apiKey": "{env:LLM_API_KEY}"
+  },
+  "default_model": "deepseek-chat",
+  "known_models": ["deepseek-chat", "deepseek-reasoner"]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "openai-compatible",
+  "name": "OpenAI Compatible",
+  "npm": "@ai-sdk/openai-compatible",
+  "options": {
+    "baseURL": "{env:LLM_BASE_URL}",
+    "apiKey": "{env:LLM_API_KEY}"
+  },
+  "default_model": "",
+  "known_models": []
+}

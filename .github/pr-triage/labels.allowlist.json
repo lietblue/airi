@@ -1,0 +1,32 @@
+{
+  "max": 12,
+  "labels": {
+    "bug": "Something isn't working.",
+    "feature": "A new user-facing feature.",
+    "pending triage": "Fallback when classification is not confident.",
+    "apps/stage-pocket": "Mobile app (iOS/Android).",
+    "apps/stage-tamagotchi": "Desktop app (Electron, Windows/macOS/Linux).",
+    "apps/stage-web": "Web app (PWA/browser).",
+    "env/os-all": "Cross-platform desktop fix touching all major OSes.",
+    "env/os-linux": "Linux-specific (X11/Wayland).",
+    "env/os-macos": "macOS-specific.",
+    "env/os-windows": "Windows-specific.",
+    "priority/general": "Normal release work.",
+    "priority/nice-to-have": "Polish/optional/low urgency.",
+    "priority/urgent": "Critical/blocker/severe regression.",
+    "scope/agent": "Agent workflow, orchestration, LLM runtime, prompt routing.",
+    "scope/audio-input": "ASR/STT/microphone/VAD/transcription input.",
+    "scope/audio-output": "TTS/voice output/speech synthesis/voice cloning.",
+    "scope/avatar": "General avatar rendering/control/interaction.",
+    "scope/avatar/live2d": "Live2D-specific avatar work.",
+    "scope/avatar/vrm": "VRM-specific avatar work.",
+    "scope/documentation": "Docs, README, manuals, tutorials.",
+    "scope/engineering": "CI, build, release, packaging, toolchain, infra.",
+    "scope/extension": "Extensions, plugins, mod/tentacle/channel APIs.",
+    "scope/game-playing-ai": "Game-playing agent behavior.",
+    "scope/i18n": "Translation keys / locale work.",
+    "scope/providers": "Provider integrations and configuration.",
+    "scope/server-api": "Maintained server API / public service behavior.",
+    "scope/ui": "UI/UX, settings, layouts, components, visual behavior."
+  }
+}
