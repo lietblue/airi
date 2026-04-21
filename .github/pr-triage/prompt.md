@@ -18,13 +18,34 @@ All under the current working directory:
 
 ## Required output
 
-Write a single file `./labels.json` (and only this file) with this exact shape:
+A placeholder file `./labels.json` already exists with this exact content:
+
+```json
+{
+  "_placeholder": true,
+  "labels": []
+}
+```
+
+You MUST overwrite it with your final classification. The final file MUST be a
+single JSON object with this exact shape and nothing else:
 
 ```json
 { "labels": ["scope/ui", "feature"] }
 ```
 
-Constraints:
+CRITICAL — how to deliver the result:
+
+- Use the `edit` tool (preferred, since the file already exists) OR the `write`
+  tool to overwrite `./labels.json`. Do NOT just print the JSON in chat / reply
+  text. Anything you print is ignored by the pipeline; only the file
+  `./labels.json` is consumed by the next step.
+- The placeholder contains `"_placeholder": true` so the pipeline can tell that
+  the agent never updated it. The final file MUST NOT contain `_placeholder`.
+- After the file is updated, immediately stop. Do not produce any further
+  reasoning, summary, or chat output.
+
+Content constraints:
 
 - Every entry MUST be a key of `labels.allowlist.json#labels`. The downstream apply step will silently drop anything else.
 - Maximum count is `labels.allowlist.json#max` (12). Exceeding it gets truncated.
@@ -101,4 +122,4 @@ Constraints:
 4. Sample diffs from `./pr/changes/` for ambiguous cases. You do not need to read every diff.
 5. Glance at `./pr/commits.md` for additional intent signals.
 6. Compute the desired label set.
-7. Write `./labels.json` and stop.
+7. Use the `edit` tool to replace the entire content of `./labels.json` with the final JSON object (the placeholder must be gone, including the `_placeholder` key). If `edit` is not available, fall back to `write`. Stop immediately after the file is updated.

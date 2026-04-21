@@ -51,6 +51,13 @@ function loadAgentLabels() {
     console.warn(`[apply] ${LABELS_JSON} missing "labels" array; treating as empty.`)
     return []
   }
+  if (parsed._placeholder === true) {
+    // collect.mjs writes a sentinel placeholder so the agent has something to
+    // overwrite. If we see it here, the agent silently failed to update the
+    // file — treat as "no managed labels" rather than crashing the workflow.
+    console.warn(`[apply] ${LABELS_JSON} still contains the _placeholder sentinel; agent did not update it. Treating as empty.`)
+    return []
+  }
   return parsed.labels.filter(l => typeof l === 'string')
 }
 

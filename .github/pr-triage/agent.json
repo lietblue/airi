@@ -1,15 +1,14 @@
 {
   "agent": {
     "triage": {
-      "mode": "subagent",
-      "description": "Read the curated PR bundle in ./pr/ and write ./labels.json. Read-only on the filesystem except for the final labels.json write.",
+      "mode": "primary",
+      "description": "Read the curated PR bundle in ./pr/ and overwrite ./labels.json (a placeholder is pre-created). Read-only on the filesystem except for that single file.",
       "tools": {
         "read": true,
-        "list": true,
         "glob": true,
         "grep": true,
         "write": true,
-        "edit": false,
+        "edit": true,
         "bash": false,
         "webfetch": false,
         "task": false,

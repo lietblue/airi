@@ -392,6 +392,17 @@ function copyStaticFiles() {
   else warn(`labels file missing: ${LABELS_FILE}`)
 }
 
+// Pre-create the labels.json placeholder. The agent must overwrite it (via the
+// `edit` or `write` tool) with the final label set. Pre-creating sidesteps a
+// recurring failure mode where small models (notably DeepSeek) refuse to call
+// `write` for a non-existent file and instead just print the JSON to chat,
+// which the apply step never sees.
+function writeLabelsPlaceholder() {
+  const placeholderPath = join(OUT_DIR, '..', 'labels.json')
+  const placeholder = { _placeholder: true, labels: [] }
+  writeFileSync(placeholderPath, `${JSON.stringify(placeholder, null, 2)}\n`)
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -423,6 +434,7 @@ async function main() {
   }
 
   copyStaticFiles()
+  writeLabelsPlaceholder()
 
   const cfg = readConfig()
   emitOutput('pr_number', String(PR_NUMBER))

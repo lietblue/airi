@@ -67,6 +67,20 @@ from the Actions tab.
 Actions tab → "PR Triage" → "Run workflow" → fill `pr` (required) and
 optionally `provider`, `model`, `base_url`.
 
+## Why the agent gets a pre-created `labels.json`
+
+`collect.mjs` writes a sentinel placeholder `{ "_placeholder": true, "labels": [] }`
+into the bundle before the agent runs. This is a deliberate workaround for a
+small-model failure mode: cheap models (notably DeepSeek's `deepseek-chat`)
+frequently refuse to call the `write` tool to *create* a new file and instead
+just print the JSON to chat, where the apply step never sees it. With the
+placeholder already on disk, the agent can take the much more familiar
+Read → Edit path, which is reliable across providers.
+
+`apply-labels.mjs` recognizes the `_placeholder` sentinel: if it's still present
+when the apply step runs, the agent silently failed to update the file and the
+PR ends up with no managed-label changes (rather than crashing CI).
+
 ## Security model (short)
 
 - `agent` job has `permissions: {}` and no `GITHUB_TOKEN` — it cannot reach the
