@@ -1,32 +1,3 @@
-<p align="center">
-  <img src="./docs/fbc/containment-banner.png" width="100%" alt="Federal Bureau of Control: Project AIRI under containment." />
-</p>
-
-<h1 align="center">FEDERAL BUREAU OF CONTROL</h1>
-<p align="center"><strong>CASE FILE AIRI-001 · ALTERED REPOSITORY · UNDER CONTAINMENT</strong></p>
-<p align="center"><em>INVENIO · INVESTIGATIO · IMPERIUM</em></p>
-
-> **BUREAU NOTICE**
-> This fork is now under the jurisdiction of the Federal Bureau of Control.
-> The Board accepts custody of this repository. Access requires Bureau clearance.
-
-| Case field | Bureau record |
-| --- | --- |
-| Object | AIRI-001: a virtual companion with an expanding fork tree |
-| Origin | [moeru-ai/airi](https://github.com/moeru-ai/airi) |
-| Custodian of this fork | [lietblue](https://github.com/lietblue) |
-| Anomaly | A virtual companion manifests inside a source repository. |
-| Containment procedure | Keep the entity inside the repository. Report all unexpected activity to the Bureau. |
-| Status | **UNDER CONTAINMENT** |
-
-This is an independent parody fork. FBC is fictional. This fork has no affiliation with Remedy Entertainment or the upstream AIRI team.
-The original authors retain their credit. The [MIT license](./LICENSE) remains unchanged.
-The FBC seal is a third-party game asset. See [asset credits](./docs/fbc/README.md).
-
-[Bureau notice card](./docs/fbc/bureau-notice.png) · [Original project documentation](#project-airi)
-
----
-
 <picture>
   <source
     width="100%"
