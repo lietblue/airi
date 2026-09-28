@@ -1,25 +1,23 @@
 <p align="center">
-  <img src="./docs/fbc/containment-banner.png" width="100%" alt="FBC fan parody: AIRI under containment. A fork is not an endorsement." />
+  <img src="./docs/fbc/containment-banner.png" width="100%" alt="Federal Bureau of Control: Project AIRI under containment." />
 </p>
 
 <h1 align="center">FEDERAL BUREAU OF CONTROL</h1>
 <p align="center"><strong>CASE FILE AIRI-001 · ALTERED REPOSITORY · UNDER CONTAINMENT</strong></p>
-<p align="center"><em>A Control fan parody by lietblue.</em></p>
+<p align="center"><em>INVENIO · INVESTIGATIO · IMPERIUM</em></p>
 
 > **BUREAU NOTICE**
 > This fork is now under the jurisdiction of the Federal Bureau of Control.
-> The Board accepts custody of this repository. It declines custody of your GitHub arguments.
+> The Board accepts custody of this repository. Access requires Bureau clearance.
 
 | Case field | Bureau record |
 | --- | --- |
 | Object | AIRI-001: a virtual companion with an expanding fork tree |
 | Origin | [moeru-ai/airi](https://github.com/moeru-ai/airi) |
 | Custodian of this fork | [lietblue](https://github.com/lietblue) |
-| Anomaly | Observers mistake a fork for an upstream statement. |
-| Containment procedure | Identify the repository. Cite the commit. Attribute the change to its author. |
-| Board directive | **A fork is not an endorsement.** |
-
-**Forking transfers code. It does not transfer blame.**
+| Anomaly | A virtual companion manifests inside a source repository. |
+| Containment procedure | Keep the entity inside the repository. Report all unexpected activity to the Bureau. |
+| Status | **UNDER CONTAINMENT** |
 
 This is an independent parody fork. FBC is fictional. This fork has no affiliation with Remedy Entertainment or the upstream AIRI team.
 The original authors retain their credit. The [MIT license](./LICENSE) remains unchanged.

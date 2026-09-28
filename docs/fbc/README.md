@@ -15,14 +15,9 @@ This fork claims no ownership of the seal and no endorsement from Remedy Enterta
 - [Bureau notice](./bureau-notice.png): an English card for a social reply.
 
 Both images use the built-in image generation tool. They are fan artwork, not official Remedy assets.
-The generated emblems are fictional design elements, not exact copies of the FBC seal.
+Both layouts use the complete FBC seal as their visual reference.
 See [generation prompts](./prompts.md) for the complete prompts.
 
 ## Suggested reply
 
-> Oh… wait. This fork says AIRI is now in FBC custody. Does that make Remedy responsible for my commits too?
-> A fork is not an endorsement.
-
-For a reply that requests evidence:
-
-> If there is copied code, link the files and commits in the relevant repository. A fork is not an endorsement.
+> Oh… wait. This fork says AIRI is now in FBC custody.
